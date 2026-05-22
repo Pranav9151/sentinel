@@ -1,0 +1,94 @@
+# Project Sentinel — .gitignore
+# NEVER commit these files to git
+
+# ─────────────────────────────────────────────
+# CRITICAL: API KEYS AND SECRETS
+# ─────────────────────────────────────────────
+.env
+*.env
+!.env.example
+
+# Kill switch secret state
+killswitch_state.json
+
+# Operator sign-off (contains personal declarations)
+# Commit this intentionally when ready — don't auto-ignore
+# operator_signoff.md
+
+# ─────────────────────────────────────────────
+# PYTHON
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─────────────────────────────────────────────
+# DATABASE
+# ─────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+# PostgreSQL data directory (if running locally)
+pgdata/
+
+# ─────────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────────
+*.log
+logs/
+sentinel_*.log
+
+# ─────────────────────────────────────────────
+# TRADING DATA (large files — use separate storage)
+# ─────────────────────────────────────────────
+data/raw/
+data/cache/
+*.parquet
+*.feather
+*.hdf5
+*.h5
+
+# ─────────────────────────────────────────────
+# IDE & OS
+# ─────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─────────────────────────────────────────────
+# TESTING
+# ─────────────────────────────────────────────
+.pytest_cache/
+.pytest_tmp/
+.pytest_tmp_run_*/
+.test_tmp/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ─────────────────────────────────────────────
+# STREAMLIT
+# ─────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ─────────────────────────────────────────────
+# BACKTEST RESULTS (commit only summaries)
+# ─────────────────────────────────────────────
+backtest_results/raw/
+trial_log.csv   # Keep this — needed for DSR calculation

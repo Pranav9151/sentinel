@@ -1,0 +1,167 @@
+# ============================================================
+# Project Sentinel — config.yaml
+# ============================================================
+# Fill in YOUR details below.
+# API keys go in .env — NEVER in this file.
+# This file is safe to commit to git.
+# .env is in .gitignore and must NEVER be committed.
+# ============================================================
+
+operator:
+  name: "Operator"                          # Your name
+  location: "Pune, Maharashtra, India"
+  is_currently_indian_resident: true
+
+  # Your total trading portfolio (NOT including emergency fund)
+  # This is the capital Sentinel manages. Start conservative.
+  total_portfolio_value_inr: 300000         # ₹3,00,000 (₹3 lakh)
+
+  # Emergency fund months confirmed separate from trading capital
+  # Sprint 6 requires this to be >= 6 before live trading
+  emergency_fund_months_confirmed: 2        # Update when ready
+
+  # Trading stage: paper → quarantine → production
+  # DO NOT change to 'production' manually — follow Sprint 6 gates
+  trading_stage: "paper"
+
+  # Git commit hash of your signed §7.6 operator sign-off
+  # Leave blank until you complete the sign-off document
+  section_7_6_signoff_commit_hash: ""
+
+
+# ─────────────────────────────────────────────
+# RISK PARAMETERS
+# ─────────────────────────────────────────────
+# These are calibrated for a ₹3L portfolio.
+# Do NOT increase these until you have 6+ months of live data.
+
+risk:
+  max_risk_per_trade_pct: 1.0       # 1% of portfolio per trade = ₹3,000
+  max_total_open_risk_pct: 6.0      # Max 6% total open = ₹18,000
+  min_risk_reward_ratio: 2.0        # Minimum 1:2 R:R — no exceptions
+  max_single_stock_pct: 10.0        # Max 10% in one stock
+  max_sector_pct: 25.0              # Max 25% in one sector
+  max_s4_aggregate_pct: 2.0         # S4 Penny stocks: max 2% combined
+  max_s4_single_pct: 0.5            # S4 Penny stocks: max 0.5% per stock
+  max_monthly_loss_pct: 5.0         # 5% monthly loss triggers review
+  vix_defensive_threshold: 22.0     # VIX > 22 = reduce all position sizes
+
+
+# ─────────────────────────────────────────────
+# TRADING STYLES
+# ─────────────────────────────────────────────
+# Set to false to completely disable that style.
+# Disabled styles produce no signals and run no screeners.
+
+trading_styles:
+  intraday: false         # Deferred to Sprint 7+ — keep false for now
+  swing: true             # 2-10 day holds — active Sprint 3+
+  positional: true        # 1-3 month holds — active Sprint 3+
+  long_term: true         # 1yr+ holds — active Sprint 3+
+  mutual_funds: true      # SIP advisory — active Sprint 4+
+  forex_usd_inr: true     # INR currency pairs on NSE — Sprint 4+
+  forex_global: true      # Global forex ANALYSIS only — Sprint 4+
+  mcx: false              # MCX commodities — Sprint 5+ (keep false for now)
+
+
+# ─────────────────────────────────────────────
+# FOREX CONFIGURATION
+# ─────────────────────────────────────────────
+
+forex:
+  usd_inr_active: true
+  usd_inr_special_handling: true    # 0.5x position size due to RBI risk
+  eur_inr_active: true
+  gbp_inr_active: true
+  jpy_inr_active: true
+  global_analysis_active: true      # EUR/USD, Gold etc — ANALYSIS ONLY
+  mcx_execution_enabled: false      # Sprint 5+ only
+
+
+# ─────────────────────────────────────────────
+# SIP CONFIGURATION
+# ─────────────────────────────────────────────
+
+sip:
+  total_monthly_budget_inr: 3000        # Your total monthly SIP budget
+  emergency_fund_monthly_inr: 1500      # Split: ₹1,500 builds emergency fund
+  sentinel_sip_inr: 1500                # Split: ₹1,500 in Sentinel-recommended funds
+  step_up_pct_per_year: 10.0            # Increase SIP 10% every April
+
+
+# ─────────────────────────────────────────────
+# EXECUTION ELIGIBLE INSTRUMENTS
+# ─────────────────────────────────────────────
+# These symbols can receive ExecutionSignals (not just AnalysisSignals).
+# All NSE equity symbols are eligible by default in the code.
+# Add specific F&O or currency symbols here.
+
+execution_eligible_instruments:
+  - "USDINR"      # NSE Currency Derivatives
+  - "EURINR"
+  - "GBPINR"
+  - "JPYINR"
+  # MCX symbols added here when mcx_execution_enabled: true
+  # - "GOLDPETAL"
+  # - "SILVERMIC"
+
+
+# ─────────────────────────────────────────────
+# SCREENER SETTINGS
+# ─────────────────────────────────────────────
+
+screeners:
+  s1_momentum_breakout:
+    enabled: true
+    max_results: 5
+    min_conviction_score: 60
+
+  s2_value_reversal:
+    enabled: true
+    max_results: 5
+    min_conviction_score: 55
+
+  s3_sector_momentum:
+    enabled: true
+    top_sectors: 3
+    stocks_per_sector: 3
+
+  s4_penny_smallcap:
+    enabled: true
+    max_results: 5           # HARD CAP — never increase this
+    min_conviction_score: 65
+
+  s5_smart_institutional:
+    enabled: true
+    max_results: 5
+    min_block_deal_cr: 50    # Minimum ₹50 crore block deal to flag
+
+  s6_mf_conviction:
+    enabled: true
+    max_results: 20
+    min_quality_funds_holding: 5
+
+  s7_forex_opportunity:
+    enabled: true
+    max_results: 3
+    run_interval_hours: 4
+
+
+# ─────────────────────────────────────────────
+# NOTIFICATIONS
+# ─────────────────────────────────────────────
+
+notifications:
+  telegram_enabled: true    # Set to false if Telegram bot not yet configured
+  morning_brief_ist: "08:30"
+  evening_debrief_ist: "15:45"
+
+
+# ─────────────────────────────────────────────
+# SYSTEM SETTINGS
+# ─────────────────────────────────────────────
+
+system:
+  timezone: "Asia/Kolkata"
+  log_level: "INFO"         # DEBUG / INFO / WARNING / ERROR
+  data_cache_minutes: 15    # How long to cache fetched data
