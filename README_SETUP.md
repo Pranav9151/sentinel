@@ -1,216 +1,181 @@
-# Project Sentinel — Windows Setup Guide
+# Project Sentinel v5.0 - Operator Handoff
 
-Complete step-by-step guide to get the system running on Windows.
+Project Sentinel is a trading research, paper/live-control, and operator
+discipline system for a solo Indian retail operator. The current codebase is
+complete through the Sprint 8 research-factory/production-grade modules that
+can be built locally without fabricating real live-trading evidence.
 
----
+## Current Status
 
-## STEP 1 — Project folder (already done ✅)
+Code-side delivery is complete for:
 
-You should have:
-```
-C:\Projects\sentinel\
-├── venv\
-├── config.yaml
-├── .env.example
-├── requirements.txt
-├── sentinel\
-│   ├── core\
-│   ├── data\
-│   ├── indicators\
-│   ├── ops\
-│   ├── screeners\
-│   ├── strategies\
-│   ├── tests\
-│   └── ui\
-```
+- Dashboard and settings
+- Mock/live connector boundary
+- Historical, fundamental, market, forex, and MF data modules
+- Technical indicators and screeners
+- Strategy 1 momentum research and backtest
+- Strategy 2 value-momentum research
+- Strategy 3 pairs mean-reversion research
+- Paper trading and live-stage router
+- Kill switch with HTTP secret validation
+- Guardrails and pre-mortem journal
+- Sprint 7 Strategy Factory
+- HRP allocation for 3+ strategies
+- Hedging-only F&O covered-call planner with Greeks
+- Strategy lifecycle gate
+- Regime posterior classifier
+- Append-only audit log with hash-chain verification
+- Production delivery readiness report
 
----
+Live-production readiness is intentionally blocked until real operator evidence
+exists. Do not bypass these gates in code.
 
-## STEP 2 — Copy the .env file
+## Quick Start
 
-In PowerShell:
+Run commands from the repository root:
+
 ```powershell
-cd C:\Projects\sentinel
-copy .env.example .env
-```
-
-Open `.env` in VS Code. You will see all API keys listed.
-**Leave them all blank for now** — `MOCK_MODE=true` means no real keys needed.
-
-The only thing to verify: `MOCK_MODE=true` is set.
-
----
-
-## STEP 3 — Activate virtual environment
-
-Every time you open a new PowerShell window, run this first:
-```powershell
-cd C:\Projects\sentinel
+cd C:\Projects\sentinel_project
 .\venv\Scripts\Activate.ps1
 ```
 
-You should see `(venv)` at the start of your prompt.
-
----
-
-## STEP 4 — Install dependencies
+Launch the dashboard:
 
 ```powershell
-pip install -r requirements.txt
-```
-
-This installs everything. Takes 2-5 minutes first time.
-
-If you see any errors, run this to fix common issues:
-```powershell
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
-
----
-
-## STEP 5 — Install TA-Lib (technical indicators)
-
-TA-Lib requires a pre-compiled Windows binary.
-
-1. Go to: https://github.com/cgohlke/talib-build/releases
-2. Find the latest release
-3. Download the file matching your Python version:
-   - For Python 3.12: `TA_Lib-0.4.xx-cp312-cp312-win_amd64.whl`
-4. Install it:
-```powershell
-# Navigate to where you downloaded the file (e.g. Downloads)
-cd C:\Users\vibho\Downloads
-pip install TA_Lib-0.4.xx-cp312-cp312-win_amd64.whl
-```
-
-If you cannot install TA-Lib right now, that is okay — the system
-uses the `ta` library as a fallback. Full TA-Lib is added in Sprint 2.
-
----
-
-## STEP 6 — Run the tests
-
-This verifies everything is working correctly:
-```powershell
-cd C:\Projects\sentinel
-pytest sentinel/tests/test_sprint1.py -v
-```
-
-Expected output:
-```
-test_sprint1.py::TestTypeSeparation::test_analysis_signal_has_no_create_order_method PASSED
-test_sprint1.py::TestTypeSeparation::test_execution_signal_raises_for_ineligible_instrument PASSED
-test_sprint1.py::TestDatetimeSafety::test_utc_now_is_timezone_aware PASSED
-...
-✅ ALL SPRINT 1 GATES PASSED — Ready for Sprint 2
-```
-
----
-
-## STEP 7 — Launch the dashboard
-
-```powershell
-cd C:\Projects\sentinel
 streamlit run sentinel/ui/dashboard.py
 ```
 
-Your browser should automatically open at:
-```
+Open:
+
+```text
 http://localhost:8501
 ```
 
-You should see:
-- The Sentinel dashboard with sidebar navigation
-- A green "MOCK MODE" banner at the top
-- Chart page showing NSE stocks with live mock prices and indicators
-- Forex page with global rates
+Run verification:
 
-**This is Sprint 1 complete.**
-
----
-
-## STEP 8 — Run the kill switch test
-
-In the dashboard:
-1. Click "⚙️ Settings" in the sidebar
-2. Click "🧪 Run Kill Switch Test"
-3. You should see: `✅ PASSED — Kill switch flattened 5 positions in X.XXXs (< 5s limit)`
-
-This is the Sprint 1 acceptance gate for the kill switch.
-
----
-
-## COMMON ISSUES
-
-### Issue: "execution policy" error when activating venv
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+venv\Scripts\ruff.exe check conftest.py sentinel --no-cache
+venv\Scripts\pytest.exe sentinel\tests -q
 ```
 
-### Issue: `ModuleNotFoundError: No module named 'sentinel'`
-Make sure you are running commands from `C:\Projects\sentinel\`:
+The last verified full-suite result was:
+
+```text
+333 passed
+```
+
+## Dashboard Pages
+
+- Morning Brief
+- Screeners
+- Chart & Analysis
+- Fundamentals
+- FII / DII
+- Forex & Macro
+- Strategy Factory
+- Guardrails & Journal
+- MF Advisor
+- Settings
+
+The Strategy Factory page includes:
+
+- Strategy 1, Strategy 2, and Strategy 3 research metrics
+- HRP or inverse-variance allocation method
+- Correlation matrix
+- F&O Hedges tab with Greeks
+- Lifecycle tab
+- Regime posterior tab
+- Promotion memo
+
+The Settings page includes:
+
+- Sprint 6 readiness
+- Production Delivery Readiness
+- Kill switch status and test
+- Data refresh controls
+
+## Production Readiness
+
+Run:
+
 ```powershell
-cd C:\Projects\sentinel
-# Then run streamlit or pytest
+venv\Scripts\python.exe -c "from sentinel.ops.deployment_readiness import build_deployment_readiness_report; r=build_deployment_readiness_report(); print(r.as_dict())"
 ```
 
-### Issue: `config.yaml not found`
-You are running from the wrong folder. Always run from `C:\Projects\sentinel\`.
+Expected current result: `ready=False`.
 
-### Issue: Port 8501 already in use
+Known blockers in the current repo/config:
+
+- `trading_stage` is `paper`
+- emergency fund confirmed is 2 months, but live requires at least 6
+- Section 7.6 sign-off hash is blank
+- `KILLSWITCH_SECRET` must be configured and not use the default
+- no auditable 90 clean live-trading days exist yet
+- Strategy Factory status is `RESEARCH_ONLY`
+
+These are not missing code. They are real-world readiness requirements.
+
+## Environment
+
+Create `.env` from the example if needed:
+
 ```powershell
-streamlit run sentinel/ui/dashboard.py --server.port 8502
+copy .env.example .env
 ```
 
-### Issue: Streamlit opens but shows errors
-Check the PowerShell terminal for error messages.
-Most common cause: missing package. Run `pip install -r requirements.txt` again.
+For local development, keep:
 
----
-
-## WHAT MOCK MODE MEANS
-
-When `MOCK_MODE=true`:
-- **All API calls return simulated data** — no internet needed
-- **No API keys required** — build the entire system for free
-- **Data is realistic** — prices, volumes, indicators all look real
-- **All logic works the same** — tests pass, dashboard shows charts
-
-When you are ready for real data:
-1. Get your API keys (see `.env.example` for where to get each one)
-2. Add them to `.env`
-3. Set `MOCK_MODE=false`
-4. Restart the dashboard
-
-**The code does not change at all. Only the `.env` file changes.**
-
----
-
-## SPRINT PROGRESS
-
-| Sprint | Status | What you get |
-|--------|--------|--------------|
-| Sprint 1 | 🚀 **YOU ARE HERE** | Dashboard + live mock prices + kill switch |
-| Sprint 2 | 📋 Next | Historical data + fundamental data + morning brief |
-| Sprint 3 | 📋 Planned | 7 screeners + Strategy 1 + Trade Cards |
-| Sprint 4 | 📋 Planned | Behavioral guardrails + MF module + Forex analysis |
-| Sprint 5 | 📋 Planned | Paper trading + full validation |
-| Sprint 6 | 📋 Planned | Real money (carefully) |
-
----
-
-## DAILY WORKFLOW (once all sprints complete)
-
-```
-07:00 IST  — Open dashboard, read Morning Brief
-07:30 IST  — Review S1 Momentum Breakout screener cards
-09:15 IST  — Execute any morning setups (manual)
-19:00 IST  — Review post-market screener output
-19:30 IST  — Review S7 Forex setups for London-NY overlap
-22:30 IST  — Close positions or set alerts for tomorrow
+```text
+MOCK_MODE=true
 ```
 
----
+Before any live market operation:
 
-*Project Sentinel v5.0 — Build phase started*
+- Configure real broker/API credentials in `.env`
+- Configure a non-default `KILLSWITCH_SECRET`
+- Keep `.env` out of git
+- Confirm the readiness report
+
+## Git Workflow
+
+Generated files are ignored:
+
+- virtual environments
+- caches
+- SQLite DB/WAL/SHM files
+- logs
+- local kill-switch state
+- test temp folders
+
+Commit a verified checkpoint:
+
+```powershell
+git add .
+git commit -m "Complete Sentinel production-grade research delivery"
+git push
+```
+
+## Safety Rules
+
+- LLMs narrate decisions; they never generate trading signals.
+- Naked directional weekly options are not implemented.
+- F&O is hedging-only.
+- Live execution remains blocked unless stage, sign-off, kill-switch, evidence,
+  and readiness checks pass.
+- Do not change `trading_stage` manually to bypass gates.
+
+## Recommended Daily Workflow
+
+```text
+07:00 IST - Open dashboard and read Morning Brief
+07:30 IST - Review screeners and Strategy Factory
+09:15 IST - Paper/live actions only if readiness stage permits
+15:45 IST - Review post-market state
+19:00 IST - Journal, guardrails, and weekly/monthly reports
+```
+
+## Final Operator Note
+
+The codebase is ready for research/paper operation and further evidence
+collection. It is not marked live-production ready until the readiness report
+passes with real-world evidence.

@@ -34,14 +34,29 @@ from sentinel.data.forex_connector import ForexConnector
 from sentinel.data.historical_store import HistoricalStore
 from sentinel.data.fundamental_store import FundamentalStore
 from sentinel.data.market_data import MarketDataStore
-from sentinel.data.mock_data import ALL_MOCK_STOCKS, MOCK_FOREX_PRICES
+from sentinel.data.mock_data import ALL_MOCK_STOCKS, MOCK_FOREX_PRICES, mock_ohlcv
 from sentinel.indicators.technical import compute_all
 from sentinel.ops.killswitch import is_kill_active, get_kill_state
+from sentinel.ops.deployment_readiness import build_deployment_readiness_report
 from sentinel.reports.morning_brief import MorningBrief
 from sentinel.screeners.runner import ScreenerRunner
 from sentinel.core.guardrails import GuardrailEngine
 from sentinel.core.premortem import PreMortemJournal
 from sentinel.data.mf_advisor import MFAdvisor
+from sentinel.fo.covered_call import (
+    CoveredCallCandidate,
+    CoveredCallPlanner,
+    EquityHolding,
+    HedgeRejection,
+)
+from sentinel.fo.greeks_dashboard import OptionContract
+from sentinel.lifecycle.lifecycle_gate import (
+    StrategyLifecycleEvidence,
+    StrategyLifecycleGate,
+    StrategyLifecycleStage,
+)
+from sentinel.regime.hmm import classify_regime
+from sentinel.research.sprint7_factory import build_sprint7_research_snapshot
 
 logger = logging.getLogger(__name__)
 MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"
@@ -171,6 +186,83 @@ def fetch_macro():
     _, forex = get_connectors()
     return forex.get_macro_overlay()
 
+@st.cache_data(ttl=600)
+def fetch_strategy_factory_snapshot():
+    return build_sprint7_research_snapshot(get_profile())
+
+@st.cache_data(ttl=600)
+def fetch_fo_hedge_candidates():
+    profile = get_profile()
+    planner = CoveredCallPlanner(float(profile.total_portfolio_value_inr))
+    holdings = [
+        EquityHolding("RELIANCE", quantity=250, average_price=2800, last_price=2950),
+        EquityHolding("TCS", quantity=175, average_price=3600, last_price=3800),
+    ]
+    contracts = [
+        OptionContract(
+            symbol="RELIANCE24JUN3100CE",
+            underlying="RELIANCE",
+            option_type="call",
+            strike=3100,
+            expiry_days=30,
+            lot_size=250,
+            last_price=42,
+            implied_vol_pct=22,
+        ),
+        OptionContract(
+            symbol="TCS24JUN4000CE",
+            underlying="TCS",
+            option_type="call",
+            strike=4000,
+            expiry_days=30,
+            lot_size=175,
+            last_price=55,
+            implied_vol_pct=20,
+        ),
+    ]
+    by_symbol = {holding.symbol: holding for holding in holdings}
+    return [
+        planner.evaluate(by_symbol[contract.underlying], contract)
+        for contract in contracts
+        if contract.underlying in by_symbol
+    ]
+
+@st.cache_data(ttl=600)
+def fetch_lifecycle_snapshot():
+    snapshot = build_sprint7_research_snapshot(get_profile())
+    metric = next(
+        m for m in snapshot.strategy_metrics
+        if m.strategy_id == "strategy2_value_momentum"
+    )
+    return StrategyLifecycleGate().evaluate(StrategyLifecycleEvidence(
+        strategy_id=metric.strategy_id,
+        current_stage=StrategyLifecycleStage.RESEARCH,
+        oos_sharpe=metric.oos_sharpe,
+        deflated_sharpe_ratio=0.95 if metric.research_gate_passed else 0.0,
+        live_correlation_to_incumbent=snapshot.correlation_matrix
+            .get("strategy1_momentum", {})
+            .get("strategy2_value_momentum", 1.0),
+        max_drawdown_pct=metric.oos_max_drawdown_pct,
+    ))
+
+@st.cache_data(ttl=600)
+def fetch_regime_posterior():
+    bars = mock_ohlcv("RELIANCE", days=120)
+    closes = [float(bar["close"]) for bar in bars]
+    returns = [
+        (closes[i] - closes[i - 1]) / closes[i - 1]
+        for i in range(1, len(closes))
+        if closes[i - 1] > 0
+    ]
+    overlay = fetch_macro()
+    dxy_change = _safe(getattr(overlay, "dxy_5d_change_pct", 0.0))
+    india_vix = 18.0
+    return classify_regime(returns, india_vix=india_vix, dxy_20d_change_pct=dxy_change)
+
+@st.cache_data(ttl=600)
+def fetch_deployment_readiness():
+    return build_deployment_readiness_report(get_profile())
+
 @st.cache_data(ttl=300)
 def fetch_screeners():
     return ScreenerRunner().run_all()
@@ -208,6 +300,7 @@ def sidebar(profile):
             "📰 Morning Brief", "🎯 Screeners",
             "📈 Chart & Analysis", "📊 Fundamentals",
             "💰 FII / DII", "🌍 Forex & Macro",
+            "Strategy Factory",
             "🧠 Guardrails & Journal", "💼 MF Advisor",
             "⚙️ Settings",
         ], label_visibility="collapsed")
@@ -669,6 +762,182 @@ def page_forex():
 # PAGE: SETTINGS
 # ─────────────────────────────────────────────
 
+def page_strategy_factory():
+    st.title("Strategy Factory")
+    st.caption("Sprint 7 - research-only multi-strategy promotion view")
+
+    with st.spinner("Building research snapshot..."):
+        snapshot = fetch_strategy_factory_snapshot()
+
+    if snapshot.live_approved:
+        st.success("All promotion gates passed. Live expansion can be reviewed.")
+    else:
+        st.warning("Research-only. Live deployment remains blocked until all gates pass.")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Promotion Status", snapshot.promotion_status)
+    c2.metric("Stage", snapshot.stage.upper())
+    c3.metric("Blocking Gates", len(snapshot.live_blockers))
+    st.caption(f"Allocation method: {snapshot.allocation_method}")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Strategies",
+        "Allocation",
+        "F&O Hedges",
+        "Lifecycle",
+        "Regime",
+        "Promotion Memo",
+    ])
+
+    with tab1:
+        rows = [
+            {
+                "Strategy": metric.display_name,
+                "Status": metric.status,
+                "OOS Sharpe": metric.oos_sharpe,
+                "OOS Return %": metric.oos_total_return_pct,
+                "Max DD %": metric.oos_max_drawdown_pct,
+                "Trades": metric.oos_n_trades,
+                "Ann Vol %": metric.annualized_vol_pct,
+                "Research Gate": "PASS" if metric.research_gate_passed else "BLOCKED",
+            }
+            for metric in snapshot.strategy_metrics
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with tab2:
+        weights_df = pd.DataFrame([
+            {"Strategy": sid, "Weight %": round(weight * 100, 2)}
+            for sid, weight in snapshot.target_weights.items()
+        ])
+        if not weights_df.empty:
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                st.subheader("Research Target Weights")
+                st.dataframe(weights_df, use_container_width=True, hide_index=True)
+            with c2:
+                fig = go.Figure(data=[go.Pie(
+                    labels=weights_df["Strategy"],
+                    values=weights_df["Weight %"],
+                    hole=0.45,
+                )])
+                fig.update_layout(template="plotly_dark", height=320,
+                                  margin=dict(l=0,r=0,t=10,b=0))
+                st.plotly_chart(fig, use_container_width=True)
+
+        ids = list(snapshot.correlation_matrix)
+        if ids:
+            matrix = [[snapshot.correlation_matrix[a][b] for b in ids] for a in ids]
+            fig = go.Figure(data=go.Heatmap(
+                z=matrix,
+                x=ids,
+                y=ids,
+                zmin=-1,
+                zmax=1,
+                colorscale="RdBu",
+            ))
+            fig.update_layout(template="plotly_dark", height=360,
+                              margin=dict(l=0,r=0,t=10,b=0))
+            st.subheader("Correlation Matrix")
+            st.plotly_chart(fig, use_container_width=True)
+
+        if snapshot.high_correlation_pairs:
+            st.warning("High-correlation pairs need review before promotion.")
+            st.dataframe(pd.DataFrame(
+                snapshot.high_correlation_pairs,
+                columns=["Strategy A", "Strategy B", "Correlation"],
+            ), use_container_width=True, hide_index=True)
+
+    with tab3:
+        evaluations = fetch_fo_hedge_candidates()
+        candidates = [item for item in evaluations if isinstance(item, CoveredCallCandidate)]
+        rejections = [item for item in evaluations if isinstance(item, HedgeRejection)]
+        st.warning("Hedging-only research. Naked directional F&O is structurally blocked.")
+
+        if candidates:
+            rows = []
+            for candidate in candidates:
+                greeks = candidate.greeks_snapshot.greeks
+                rows.append({
+                    "Contract": candidate.contract.symbol,
+                    "Underlying": candidate.holding.symbol,
+                    "Lots": candidate.lots,
+                    "Premium": candidate.premium_income,
+                    "Exposure %": candidate.notional_exposure_pct,
+                    "Delta": greeks.delta,
+                    "Gamma": greeks.gamma,
+                    "Theta/day": greeks.theta,
+                    "Vega": greeks.vega,
+                    "Rho": greeks.rho,
+                    "Warnings": "; ".join(candidate.warnings),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No covered-call candidates fit the current portfolio and exposure caps.")
+
+        if rejections:
+            st.subheader("Blocked Hedge Attempts")
+            st.dataframe(pd.DataFrame([
+                {"Contract": rejection.symbol, "Reason": rejection.reason}
+                for rejection in rejections
+            ]), use_container_width=True, hide_index=True)
+
+    with tab4:
+        lifecycle = fetch_lifecycle_snapshot()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Strategy", lifecycle.strategy_id)
+        c2.metric("Current Stage", lifecycle.current_stage.value.upper())
+        c3.metric("Recommendation", lifecycle.recommended_stage.value.upper())
+        if lifecycle.can_promote:
+            st.success("Lifecycle evidence supports a one-stage promotion.")
+        else:
+            st.warning("Lifecycle promotion is blocked.")
+
+        if lifecycle.blockers:
+            st.subheader("Lifecycle Blockers")
+            for blocker in lifecycle.blockers:
+                st.error(blocker)
+        if lifecycle.warnings:
+            st.subheader("Lifecycle Warnings")
+            for warning in lifecycle.warnings:
+                st.warning(warning)
+
+    with tab5:
+        posterior = fetch_regime_posterior()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Regime", posterior.state.value.replace("_", " ").upper())
+        c2.metric("Confidence", f"{posterior.confidence * 100:.1f}%")
+        c3.metric("Risk Multiplier", f"{posterior.recommended_risk_multiplier:.2f}x")
+        if posterior.vix_defensive:
+            st.warning("VIX defensive overlay is active.")
+        st.caption(posterior.rationale)
+        regime_df = pd.DataFrame([
+            {"State": state.value, "Probability %": round(prob * 100, 2)}
+            for state, prob in posterior.probabilities.items()
+        ])
+        st.dataframe(regime_df, use_container_width=True, hide_index=True)
+        fig = go.Figure(data=[go.Bar(
+            x=regime_df["State"],
+            y=regime_df["Probability %"],
+            marker_color=["#00cc88", "#ffaa00", "#ff4444"],
+        )])
+        fig.update_layout(template="plotly_dark", height=320,
+                          margin=dict(l=0,r=0,t=10,b=0))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab6:
+        gate_rows = [
+            {
+                "Gate": gate.name,
+                "Status": "PASS" if gate.passed else "BLOCKED",
+                "Detail": gate.detail,
+            }
+            for gate in snapshot.gates
+        ]
+        st.dataframe(pd.DataFrame(gate_rows), use_container_width=True, hide_index=True)
+        st.text_area("Promotion Memo", snapshot.promotion_memo, height=320)
+
+
 def page_settings(profile):
     st.title("⚙️ Settings")
     c1,c2=st.columns(2)
@@ -681,6 +950,15 @@ def page_settings(profile):
         st.subheader("Sprint 6 Readiness")
         for b in profile.validate_sprint6_ready() or ["✅ All gates passed"]:
             st.warning(b) if "⚠️" in b or b!="✅ All gates passed" else st.success(b)
+    st.divider()
+    readiness = fetch_deployment_readiness()
+    st.subheader("Production Delivery Readiness")
+    if readiness.ready:
+        st.success("All production readiness checks passed.")
+    else:
+        st.warning(f"{len(readiness.blockers)} readiness checks are blocking production.")
+    st.dataframe(pd.DataFrame(readiness.as_dict()["checks"]),
+                 use_container_width=True, hide_index=True)
     st.divider()
     ks=get_kill_state()
     if ks["active"]:
@@ -886,6 +1164,7 @@ def main():
         "📊 Fundamentals":        page_fundamentals,
         "💰 FII / DII":           page_fii,
         "🌍 Forex & Macro":       page_forex,
+        "Strategy Factory":        page_strategy_factory,
         "🧠 Guardrails & Journal":page_guardrails,
         "💼 MF Advisor":          page_mf_advisor,
         "⚙️ Settings":            lambda: page_settings(profile),
