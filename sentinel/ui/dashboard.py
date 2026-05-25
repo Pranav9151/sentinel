@@ -57,6 +57,8 @@ from sentinel.lifecycle.lifecycle_gate import (
 )
 from sentinel.regime.hmm import classify_regime
 from sentinel.research.sprint7_factory import build_sprint7_research_snapshot
+from sentinel.trade_card.builder import TradeResearchCardBuilder
+from sentinel.trade_card.narration import narrate_card
 
 logger = logging.getLogger(__name__)
 MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"
@@ -460,6 +462,47 @@ def _trade_card(cand: dict, rank: int):
             for r in risks:
                 st.write(f"• {r}")
 
+def _structured_trade_card(cand: dict, rank: int):
+    card = TradeResearchCardBuilder(get_profile()).build(cand)
+    sector = card.feature_breakdown.get("sector", cand.get("sector", "?"))
+    icon = "ðŸŸ¢" if card.direction == "BUY" else "ðŸ”´"
+
+    with st.expander(
+        f"#{rank}  {icon} **{card.symbol}** â€” {sector}  |  "
+        f"Score: {card.conviction_score:.0f}/100  |  R:R 1:{card.risk_reward:.1f}",
+        expanded=(rank == 1),
+    ):
+        if card.amber_banner:
+            st.markdown(f'<div class="amber-banner"><b>{card.amber_banner}</b></div>',
+                        unsafe_allow_html=True)
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Action",     f"{icon} {card.direction}")
+        c2.metric("Entry Zone", f"â‚¹{card.entry_low:,.2f} â€“ â‚¹{card.entry_high:,.2f}")
+        c3.metric("Stop Loss",  f"â‚¹{card.stop_loss:,.2f}")
+        c4.metric("Target 1",   f"â‚¹{card.target_1:,.2f}")
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("R:R",  f"1 : {card.risk_reward:.1f}")
+        c2.metric("Qty",  str(card.suggested_quantity))
+        c3.metric("Score",f"{card.conviction_score:.0f}/100")
+        c4.metric("Sector",sector)
+        st.progress(int(min(card.conviction_score,100))/100,
+                    text=f"Conviction: {card.conviction_score:.0f}/100")
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Risk INR", f"â‚¹{card.risk_amount_inr:,.0f}")
+        c2.metric("Gross Value", f"â‚¹{card.gross_position_value_inr:,.0f}")
+        c3.metric("Round-trip Cost", f"â‚¹{card.estimated_round_trip_cost_inr:,.0f}")
+        if card.thesis:
+            st.markdown("**ðŸ“‹ Thesis:**")
+            st.write(card.thesis)
+        if card.risks:
+            st.markdown("**âš ï¸ Risks:**")
+            for risk in card.risks:
+                st.write(f"â€¢ {risk}")
+        for warning in card.warnings:
+            st.warning(warning)
+        with st.expander("Narration", expanded=False):
+            st.write(narrate_card(card))
+
 def page_screeners():
     st.title("🎯 Screeners — Sprint 3")
     st.caption("All 7 screeners running on mock data")
@@ -523,7 +566,7 @@ def page_screeners():
             return
 
         for i, cand in enumerate(candidates):
-            _trade_card(cand, i+1)
+            _structured_trade_card(cand, i+1)
 
 
 # ─────────────────────────────────────────────
