@@ -506,6 +506,13 @@ class TestDataConnectors:
             assert "impact" in event
             assert event["impact"] in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 
+    def test_economic_calendar_degraded_live_fallback(self):
+        forex = ForexConnector()
+        forex.mock_mode = False
+        calendar = forex.get_economic_calendar(days_ahead=7)
+        assert len(calendar) > 0
+        assert all("timestamp" in event for event in calendar)
+
 
 # ─────────────────────────────────────────────
 # GATE 7 — MACRO OVERLAY: DXY regime classification

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -33,6 +34,8 @@ from sentinel.data.forex_connector import ForexConnector
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path("sentinel_data.db")
+_DB_INIT_LOCK = threading.RLock()
+_DB_INITIALIZED = False
 
 
 # ─────────────────────────────────────────────
@@ -41,9 +44,20 @@ DB_PATH = Path("sentinel_data.db")
 
 def get_connection() -> sqlite3.Connection:
     """Get a SQLite connection with proper settings."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.row_factory = sqlite3.Row          # Rows behave like dicts
-    conn.execute("PRAGMA journal_mode=WAL") # Better concurrency
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def get_read_connection() -> sqlite3.Connection:
+    """Get a fast read-only SQLite connection for dashboard/query paths."""
+    if not DB_PATH.exists():
+        return get_connection()
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -53,9 +67,23 @@ def init_database() -> None:
     Create all tables if they don't exist.
     Safe to call multiple times — uses IF NOT EXISTS.
     """
-    conn = get_connection()
-    try:
-        conn.executescript("""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
+
+    with _DB_INIT_LOCK:
+        if _DB_INITIALIZED:
+            return
+
+        conn = get_read_connection()
+        try:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL") # Better concurrency
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                logger.warning("SQLite journal_mode setup skipped because database is busy.")
+            conn.executescript("""
             -- OHLCV table for both equities and forex
             CREATE TABLE IF NOT EXISTS ohlcv (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,10 +187,11 @@ def init_database() -> None:
                 inserted_at TEXT NOT NULL
             );
         """)
-        conn.commit()
-        logger.info(f"Database initialized at {DB_PATH.absolute()}")
-    finally:
-        conn.close()
+            conn.commit()
+            _DB_INITIALIZED = True
+            logger.info(f"Database initialized at {DB_PATH.absolute()}")
+        finally:
+            conn.close()
 
 
 # ─────────────────────────────────────────────
@@ -281,7 +310,7 @@ class HistoricalStore:
         from_ts = (as_of - timedelta(days=lookback_days)).isoformat()
         to_ts = as_of.isoformat()
 
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT symbol, timestamp, open, high, low, close, volume,
@@ -333,7 +362,7 @@ class HistoricalStore:
 
     def get_available_symbols(self, timeframe: str = "day") -> list[str]:
         """List all symbols that have data in the store."""
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT DISTINCT symbol FROM ohlcv

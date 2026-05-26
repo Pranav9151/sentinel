@@ -62,7 +62,7 @@ MOCK_MIDCAP_STOCKS: dict[str, dict] = {
     "ABCAPITAL":  {"name": "Aditya Birla Capital", "price": 195.0, "sector": "NBFC"},
     "CHOLAFIN":   {"name": "Cholamandalam Finance", "price": 1180.0, "sector": "NBFC"},
     "PERSISTENT": {"name": "Persistent Systems", "price": 5800.0, "sector": "IT"},
-    "Dixon":      {"name": "Dixon Technologies", "price": 15200.0, "sector": "Consumer"},
+    "DIXON":      {"name": "Dixon Technologies", "price": 15200.0, "sector": "Consumer"},
     "KPITTECH":   {"name": "KPIT Technologies", "price": 1680.0, "sector": "IT"},
     "APOLLOHOSP": {"name": "Apollo Hospitals", "price": 6800.0, "sector": "Healthcare"},
     "TRENT":      {"name": "Trent", "price": 5600.0, "sector": "Retail"},

@@ -37,8 +37,10 @@ build/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
+*.sqlite-journal
 # PostgreSQL data directory (if running locally)
 pgdata/
 
@@ -86,6 +88,10 @@ htmlcov/
 # STREAMLIT
 # ─────────────────────────────────────────────
 .streamlit/secrets.toml
+
+# React UI
+frontend/node_modules/
+frontend/dist/
 
 # ─────────────────────────────────────────────
 # BACKTEST RESULTS (commit only summaries)

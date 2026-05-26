@@ -9,7 +9,8 @@ can be built locally without fabricating real live-trading evidence.
 
 Code-side delivery is complete for:
 
-- Dashboard and settings
+- React operator console with Python JSON API
+- Legacy Streamlit dashboard and settings
 - Mock/live connector boundary
 - Historical, fundamental, market, forex, and MF data modules
 - Technical indicators and screeners
@@ -39,16 +40,36 @@ cd C:\Projects\sentinel_project
 .\venv\Scripts\Activate.ps1
 ```
 
-Launch the dashboard:
+Launch the React dashboard:
 
 ```powershell
-streamlit run sentinel/ui/dashboard.py
+.\launch_react_dashboard.bat
 ```
 
 Open:
 
 ```text
-http://localhost:8501
+http://127.0.0.1:8765
+```
+
+The React UI and local Python API are served from the same process in this
+mode. During frontend-only development, you can still run Vite from
+`frontend/` and it will proxy `/api` to `http://127.0.0.1:8765`.
+
+For a production-style static build:
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+venv\Scripts\python.exe -m sentinel.ui.react_api
+```
+
+Open:
+
+```text
+http://127.0.0.1:8765
 ```
 
 Run verification:
@@ -61,7 +82,7 @@ venv\Scripts\pytest.exe sentinel\tests -q
 The last verified full-suite result was:
 
 ```text
-333 passed
+341 passed
 ```
 
 ## Dashboard Pages
@@ -93,6 +114,12 @@ The Settings page includes:
 - Production Delivery Readiness
 - Kill switch status and test
 - Data refresh controls
+
+The legacy Streamlit dashboard remains available during the React transition:
+
+```powershell
+streamlit run sentinel/ui/dashboard.py
+```
 
 ## Production Readiness
 

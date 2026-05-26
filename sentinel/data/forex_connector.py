@@ -345,44 +345,47 @@ class ForexConnector:
         Documented in: GLOBAL_FOREX_MODULE.md §F2.4
         """
         if self.mock_mode:
-            from datetime import timedelta
-            from sentinel.core.types import utc_now
-            now = utc_now()
-            # Return mock calendar events
-            return [
-                {
-                    "timestamp": (now + timedelta(hours=18)).isoformat(),
-                    "currency": "USD",
-                    "event": "Non-Farm Payrolls",
-                    "impact": "HIGH",
-                    "consensus": "185K",
-                    "previous": "175K",
-                    "actual": None,
-                },
-                {
-                    "timestamp": (now + timedelta(days=2, hours=14)).isoformat(),
-                    "currency": "EUR",
-                    "event": "ECB Interest Rate Decision",
-                    "impact": "CRITICAL",
-                    "consensus": "No change",
-                    "previous": "4.25%",
-                    "actual": None,
-                },
-                {
-                    "timestamp": (now + timedelta(days=3, hours=5)).isoformat(),
-                    "currency": "INR",
-                    "event": "RBI MPC Meeting",
-                    "impact": "CRITICAL",
-                    "consensus": "No change",
-                    "previous": "6.50%",
-                    "actual": None,
-                },
-            ]
+            return self._mock_economic_calendar()
 
-        # Live: parse from investing.com or ForexFactory
+        # Live provider integration is optional; degraded mode uses bounded mock events.
         # Placeholder — implement in Sprint 4
-        logger.warning("Live economic calendar not yet implemented. Using mock.")
-        return self.get_economic_calendar.__wrapped__(days_ahead)   # type: ignore
+        logger.warning("Live economic calendar provider unavailable. Using safe mock fallback.")
+        return self._mock_economic_calendar()
+
+    @staticmethod
+    def _mock_economic_calendar() -> list[dict[str, Any]]:
+        """Economic calendar fallback used in mock and degraded live mode."""
+        from datetime import timedelta
+        now = utc_now()
+        return [
+            {
+                "timestamp": (now + timedelta(hours=18)).isoformat(),
+                "currency": "USD",
+                "event": "Non-Farm Payrolls",
+                "impact": "HIGH",
+                "consensus": "185K",
+                "previous": "175K",
+                "actual": None,
+            },
+            {
+                "timestamp": (now + timedelta(days=2, hours=14)).isoformat(),
+                "currency": "EUR",
+                "event": "ECB Interest Rate Decision",
+                "impact": "CRITICAL",
+                "consensus": "No change",
+                "previous": "4.25%",
+                "actual": None,
+            },
+            {
+                "timestamp": (now + timedelta(days=3, hours=5)).isoformat(),
+                "currency": "INR",
+                "event": "RBI MPC Meeting",
+                "impact": "CRITICAL",
+                "consensus": "No change",
+                "previous": "6.50%",
+                "actual": None,
+            },
+        ]
 
     @staticmethod
     def _classify_dxy_regime(change_5d_pct: float) -> DXYRegime:

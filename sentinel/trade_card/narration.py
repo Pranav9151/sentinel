@@ -8,9 +8,10 @@ fields. It does not add predictions or external claims.
 from __future__ import annotations
 
 from sentinel.trade_card.builder import TradeResearchCard
+from sentinel.trade_card.news_extractor import NewsContext
 
 
-def narrate_card(card: TradeResearchCard) -> str:
+def narrate_card(card: TradeResearchCard, news_context: NewsContext | None = None) -> str:
     lines = []
     if card.amber_banner:
         lines.append(card.amber_banner)
@@ -34,4 +35,9 @@ def narrate_card(card: TradeResearchCard) -> str:
     ])
     if card.warnings:
         lines.append("Warnings: " + "; ".join(card.warnings))
+    if news_context and news_context.items:
+        lines.append(
+            "News context: "
+            + "; ".join(f"{item.source}: {item.title}" for item in news_context.items)
+        )
     return "\n".join(lines)

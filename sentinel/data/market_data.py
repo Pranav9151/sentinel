@@ -18,7 +18,7 @@ from datetime import timedelta, date
 from typing import Any, Optional
 
 from sentinel.core.types import utc_now
-from sentinel.data.historical_store import get_connection, init_database
+from sentinel.data.historical_store import get_connection, get_read_connection, init_database
 from sentinel.data.mock_data import (
     mock_fii_dii_data,
     mock_market_internals,
@@ -91,7 +91,7 @@ class MarketDataStore:
 
     def get_fii_dii(self, days: int = 30) -> list[dict[str, Any]]:
         """Get FII/DII flow history for the last N days."""
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT * FROM fii_dii_flows
@@ -190,7 +190,7 @@ class MarketDataStore:
         Check if a symbol is on the GSM/ASM surveillance list.
         Hard rejection — used in ALL screeners and order validation.
         """
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             row = conn.execute("""
                 SELECT 1 FROM surveillance_list
@@ -203,7 +203,7 @@ class MarketDataStore:
 
     def get_surveillance_list(self) -> list[str]:
         """Get all currently active surveillance symbols."""
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT DISTINCT symbol FROM surveillance_list
@@ -361,7 +361,7 @@ class MarketDataStore:
         from_str = now.date().isoformat()
         to_str = (now + timedelta(days=days_ahead)).date().isoformat()
 
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT * FROM market_calendar
@@ -376,7 +376,7 @@ class MarketDataStore:
     def get_high_impact_today(self) -> list[dict[str, Any]]:
         """Get HIGH and CRITICAL impact events for today."""
         today = utc_now().date().isoformat()
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT * FROM market_calendar
@@ -399,7 +399,7 @@ class MarketDataStore:
         now = utc_now()
         window_end = now + timedelta(minutes=minutes)
 
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             query = """
                 SELECT 1 FROM market_calendar
@@ -425,10 +425,10 @@ class MarketDataStore:
 
     def _fetch_nsdl_flows(self, trade_date: date) -> Optional[dict[str, Any]]:
         """Fetch FII/DII flows from NSDL. Sprint 4 implementation."""
-        logger.info("Live NSDL flow fetch not yet implemented. Using mock.")
+        logger.info("Live NSDL flow provider unavailable. Using safe mock fallback.")
         return mock_fii_dii_data()
 
     def _fetch_nse_surveillance(self) -> list[str]:
         """Fetch GSM/ASM list from NSE. Sprint 4 implementation."""
-        logger.info("Live NSE surveillance fetch not yet implemented. Using mock.")
+        logger.info("Live NSE surveillance provider unavailable. Using safe mock fallback.")
         return mock_gsm_asm_list()

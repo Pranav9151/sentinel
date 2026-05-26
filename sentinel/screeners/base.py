@@ -47,6 +47,7 @@ class BaseScreener(ABC):
     description: str = "Base screener"
     max_results: int = 5
     min_score: float = 50.0
+    _surveillance_cache: set[str] | None = None
 
     def __init__(self) -> None:
         self.market_data = MarketDataStore()
@@ -55,11 +56,15 @@ class BaseScreener(ABC):
 
     def _load_surveillance(self) -> None:
         """Load GSM/ASM list. Called once at init."""
+        if BaseScreener._surveillance_cache is not None:
+            self._surveillance_list = BaseScreener._surveillance_cache
+            return
         try:
             self.market_data.refresh_gsm_asm_list()
             self._surveillance_list = set(
                 self.market_data.get_surveillance_list()
             )
+            BaseScreener._surveillance_cache = self._surveillance_list
         except Exception as e:
             logger.warning(f"Could not load surveillance list: {e}")
             self._surveillance_list = set()

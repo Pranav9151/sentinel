@@ -24,7 +24,7 @@ import requests
 
 from sentinel.core.errors import DataSourceUnavailableError
 from sentinel.core.types import utc_now
-from sentinel.data.historical_store import get_connection, init_database
+from sentinel.data.historical_store import get_connection, get_read_connection, init_database
 from sentinel.data.mock_data import mock_fundamentals, ALL_MOCK_STOCKS
 
 logger = logging.getLogger(__name__)
@@ -56,9 +56,15 @@ class FundamentalStore:
         Fetch and store fundamental data for a symbol.
         Returns True if successful.
         """
+        symbol = symbol.upper().strip()
         logger.info(f"Ingesting fundamentals for {symbol}...")
 
         if MOCK_MODE:
+            if symbol not in ALL_MOCK_STOCKS:
+                logger.warning("  %s: not in supported mock equity universe", symbol)
+                return False
+            if self.get_latest(symbol):
+                return True
             data = mock_fundamentals(symbol)
         else:
             data = self._fetch_from_fmp(symbol)
@@ -91,7 +97,7 @@ class FundamentalStore:
 
     def get_latest(self, symbol: str) -> Optional[dict[str, Any]]:
         """Get the most recent fundamental snapshot for a symbol."""
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             row = conn.execute("""
                 SELECT * FROM fundamentals
@@ -108,7 +114,7 @@ class FundamentalStore:
         Get fundamental data as it was known on a specific date.
         PIT-correct — never returns data published after as_of_date.
         """
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             row = conn.execute("""
                 SELECT * FROM fundamentals
@@ -123,7 +129,7 @@ class FundamentalStore:
 
     def get_all_latest(self) -> list[dict[str, Any]]:
         """Get latest fundamentals for all symbols in the store."""
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT f.*
@@ -158,6 +164,11 @@ class FundamentalStore:
 
         Documented in: ARCHITECTURE_v5.md §8.1 (Quality Score)
         """
+        symbol = symbol.upper().strip()
+        if MOCK_MODE and symbol not in ALL_MOCK_STOCKS:
+            return {"symbol": symbol, "quality_score": None,
+                    "error": "Symbol is not in the supported equity universe"}
+
         data = self.get_latest(symbol)
         if not data:
             return {"symbol": symbol, "quality_score": None,
@@ -277,7 +288,7 @@ class FundamentalStore:
         Screen all stocks against fundamental quality criteria.
         Used by S2 (Value + Reversal) and S6 (MF Conviction) screeners.
         """
-        conn = get_connection()
+        conn = get_read_connection()
         try:
             rows = conn.execute("""
                 SELECT f.*

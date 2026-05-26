@@ -1,7 +1,12 @@
 """Trade Research Card builder and narration tests."""
 
 from sentinel.trade_card.builder import ANALYSIS_ONLY_BANNER, TradeResearchCardBuilder
+from sentinel.trade_card.llm_narration import (
+    build_grounded_narration_prompt,
+    validate_narration_grounding,
+)
 from sentinel.trade_card.narration import narrate_card
+from sentinel.trade_card.news_extractor import extract_news_context, scrub_text
 
 
 def _base_candidate(**extra):
@@ -68,3 +73,38 @@ class TestTradeResearchCard:
             execution_eligible=False,
         ))
         assert ANALYSIS_ONLY_BANNER in narrate_card(card)
+
+    def test_news_context_scrubs_pii_and_limits_items(self):
+        context = extract_news_context("RELIANCE", [
+            {
+                "title": "Reliance update from analyst test@example.com +91 98765 43210",
+                "source": {"name": "Newswire"},
+                "publishedAt": "2026-05-24T09:00:00Z",
+            },
+            {
+                "title": "Second update",
+                "source": {"name": "Exchange"},
+                "publishedAt": "2026-05-24T10:00:00Z",
+            },
+        ], max_items=1)
+        assert len(context.items) == 1
+        assert "[email]" in context.items[0].title
+        assert "[phone]" in context.items[0].title
+        assert scrub_text("hello   world") == "hello world"
+
+    def test_grounded_prompt_contains_fields_and_forbids_signal_generation(self):
+        card = TradeResearchCardBuilder().build(_base_candidate())
+        context = extract_news_context("RELIANCE", [{
+            "title": "Company files exchange update",
+            "source": {"name": "Exchange"},
+            "publishedAt": "2026-05-24T09:00:00Z",
+        }])
+        prompt = build_grounded_narration_prompt(card, context)
+        assert "must not originate signals" in prompt.system
+        assert "RELIANCE" in prompt.user
+        assert "Company files exchange update" in prompt.user
+
+    def test_grounding_validator_flags_prediction_language(self):
+        violations = validate_narration_grounding("This will rise and is guaranteed.")
+        assert "will rise" in violations
+        assert "guaranteed" in violations
