@@ -36,6 +36,7 @@ from sentinel.reporting.weekly_review import WeeklyReviewReport
 from sentinel.reporting.monthly_letter import MonthlyLetter
 from sentinel.ops.paper_trader import PaperTrader
 import sentinel.ops.killswitch as ks
+import sentinel.live.live_order_router as live_order_router
 from sentinel.core.types import utc_now
 
 
@@ -431,6 +432,58 @@ class TestLiveOrderRouter:
 
     def test_paper_trader_accessible(self, router):
         assert router.paper_trader is not None
+
+    def test_invalid_direction_is_rejected_before_stage_or_broker(self, router):
+        r = router.place_order(
+            "RELIANCE", "sideways", 1,
+            Decimal("2950"), Decimal("2910"), Decimal("3030"),
+        )
+
+        assert r.approved is False
+        assert r.executed is False
+        assert "direction must be long or short" in r.rejection_reason
+
+    def test_invalid_quantity_is_rejected_before_stage_or_broker(self, router):
+        r = router.place_order(
+            "RELIANCE", "long", 0,
+            Decimal("2950"), Decimal("2910"), Decimal("3030"),
+        )
+
+        assert r.approved is False
+        assert r.executed is False
+        assert "quantity" in r.rejection_reason
+
+    def test_invalid_long_price_geometry_is_rejected(self, router):
+        r = router.place_order(
+            "RELIANCE", "long", 1,
+            Decimal("2950"), Decimal("2960"), Decimal("3030"),
+        )
+
+        assert r.approved is False
+        assert r.executed is False
+        assert "long stop_loss must be below entry_price" in r.rejection_reason
+
+    def test_live_mode_blocks_when_deployment_readiness_has_blockers(self, router, monkeypatch):
+        class Blocker:
+            name = "Operator sign-off"
+            detail = "missing sign-off"
+
+        monkeypatch.setattr(live_order_router, "MOCK_MODE", False)
+        monkeypatch.setattr(
+            live_order_router.LiveOrderRouter,
+            "_live_readiness_blocks",
+            staticmethod(lambda: [f"{Blocker.name}: {Blocker.detail}"]),
+        )
+
+        r = router.place_order(
+            "RELIANCE", "long", 1,
+            Decimal("2950"), Decimal("2910"), Decimal("3030"),
+        )
+
+        assert r.approved is False
+        assert r.executed is False
+        assert r.execution_mode == "blocked"
+        assert "Live readiness blocked" in r.rejection_reason
 
 
 # ═══════════════════════════════════════════

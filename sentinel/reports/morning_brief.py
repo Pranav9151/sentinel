@@ -21,6 +21,7 @@ Documented in: SCREENERS_MODULE_SPEC.md §S9, SPRINT_ROADMAP_v2.md Sprint 2
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from sentinel.core.types import utc_now, MacroOverlayDaily
@@ -28,6 +29,7 @@ from sentinel.data.market_data import MarketDataStore
 from sentinel.data.forex_connector import ForexConnector
 
 logger = logging.getLogger(__name__)
+MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"
 
 
 class MorningBrief:
@@ -55,6 +57,23 @@ class MorningBrief:
         report: dict[str, Any] = {
             "generated_at": now.isoformat(),
             "report_date": now.date().isoformat(),
+            "data_quality": {
+                "mode": "mock" if MOCK_MODE else "live",
+                "is_live": False if MOCK_MODE else "partial",
+                "warning": (
+                    "MOCK_MODE=true. Market numbers are simulated test data and "
+                    "will not match live markets."
+                    if MOCK_MODE
+                    else (
+                        "Partial live mode. Forex/macro can use live providers, but NSE "
+                        "internals and FII/DII flows still require live provider integration."
+                    )
+                ),
+                "limitations": [
+                    "NSE market internals use fallback data until a live NSE provider is connected.",
+                    "NSDL FII/DII flows use fallback data until a live NSDL provider is connected.",
+                ],
+            },
             "sections": {},
         }
 
@@ -169,7 +188,12 @@ class MorningBrief:
         trend = self.market_data.get_fii_trend(days=20)
 
         if not latest:
-            return {"available": False, "trend": trend}
+            return {
+                "available": False,
+                "trend": trend,
+                "data_quality": trend.get("data_quality"),
+                "message": "FII/DII flow data is unavailable; no institutional-flow conclusion generated.",
+            }
 
         fii_net = latest.get("fii_net_cr", 0) or 0
         dii_net = latest.get("dii_net_cr", 0) or 0
@@ -209,6 +233,27 @@ class MorningBrief:
     def _internals_section(self) -> dict[str, Any]:
         """Market breadth and internals."""
         internals = self.market_data.get_market_internals()
+        if internals.get("available") is False:
+            return {
+                "available": False,
+                "data_quality": internals.get("data_quality"),
+                "message": "Market internals unavailable; live NSE provider required.",
+                "nifty50_close": None,
+                "nifty50_change_pct": None,
+                "banknifty_close": None,
+                "banknifty_change_pct": None,
+                "india_vix": None,
+                "vix_label": "UNAVAILABLE",
+                "defensive_mode_active": False,
+                "advance_decline_ratio": None,
+                "ad_label": "UNAVAILABLE",
+                "advances": None,
+                "declines": None,
+                "pcr": None,
+                "new_52w_highs": None,
+                "new_52w_lows": None,
+            }
+
         vix = internals.get("india_vix", 15)
         defensive = self.market_data.is_defensive_mode(vix_threshold=22.0)
 
@@ -269,7 +314,14 @@ class MorningBrief:
     def _key_levels(self) -> dict[str, Any]:
         """Key Nifty support/resistance levels for the day."""
         internals = self.market_data.get_market_internals()
-        nifty = internals.get("nifty50_close", 22500)
+        nifty = internals.get("nifty50_close")
+        if internals.get("available") is False or nifty is None:
+            return {
+                "available": False,
+                "nifty50": None,
+                "data_quality": internals.get("data_quality"),
+                "note": "Key levels unavailable because live Nifty data is not configured.",
+            }
 
         # Simple support/resistance based on round numbers and recent levels
         # Sprint 3: Replace with actual Nifty OHLCV-based calculation
@@ -290,7 +342,13 @@ class MorningBrief:
 
         # VIX-based flag
         internals = report["sections"].get("internals", {})
-        vix = internals.get("india_vix", 15)
+        vix = internals.get("india_vix")
+        if vix is None:
+            flags.append(
+                "Market internals unavailable: confirm Nifty, India VIX, breadth, and PCR "
+                "from a live source before any trading decision."
+            )
+            return flags
         if vix > 22:
             flags.append(
                 f"🔴 DEFENSIVE MODE: India VIX at {vix:.1f} (threshold: 22). "

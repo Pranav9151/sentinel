@@ -34,6 +34,8 @@ import './styles.css'
 
 const views = [
   { id: 'overview', label: 'Overview', icon: Gauge },
+  { id: 'research', label: 'Research', icon: Brain },
+  { id: 'options', label: 'Options Lab', icon: Activity },
   { id: 'screeners', label: 'Screeners', icon: Target },
   { id: 'strategy', label: 'Strategy Factory', icon: BarChart3 },
   { id: 'forex', label: 'Forex & Macro', icon: LineChart },
@@ -75,13 +77,14 @@ function useSentinelData() {
   const refresh = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }))
     try {
-      const keys = ['status', 'morning', 'strategy', 'forex', 'guardrails']
+      const keys = ['status', 'morning', 'strategy', 'forex', 'guardrails', 'dataHealth']
       const paths = [
         '/api/status',
         '/api/morning-brief',
         '/api/strategy-factory',
         '/api/forex',
         '/api/guardrails',
+        '/api/data-health',
       ]
       const results = await Promise.allSettled(paths.map((path) => api(path)))
       const data = {}
@@ -147,7 +150,7 @@ function Shell() {
           <div className="brand-mark"><Shield size={21} /></div>
           <div>
             <h1>Sentinel</h1>
-            <span>Research Console</span>
+            <span>AI Trading Research Assistant</span>
           </div>
         </div>
         <nav className="nav">
@@ -179,7 +182,7 @@ function Shell() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Project Sentinel v5</p>
+            <p className="eyebrow">AI Trading Research Assistant</p>
             <h2>{views.find((view) => view.id === active)?.label}</h2>
           </div>
           <div className="top-actions">
@@ -191,10 +194,23 @@ function Shell() {
         </header>
 
         {error && <Banner tone="bad" icon={AlertTriangle}>{error}</Banner>}
+        {data.status?.mock_mode && (
+          <Banner tone="warn" icon={AlertTriangle}>
+            MOCK DATA ACTIVE: market, morning brief, and forex numbers are simulated test data, not live current prices.
+          </Banner>
+        )}
         {killActive && <Banner tone="bad" icon={Lock}>{data.status?.kill_switch?.reason || 'Kill switch is active.'}</Banner>}
 
         <section className="content">
           {active === 'overview' && <Overview data={data} loading={loading} />}
+          {active === 'research' && (
+            <ResearchAssistant
+              assets={data.researchAssets}
+              loadingAssets={Boolean(pending.researchAssets)}
+              loadAssets={() => loadResource('researchAssets', '/api/research-assets')}
+            />
+          )}
+          {active === 'options' && <OptionsLab status={data.status} />}
           {active === 'screeners' && (
             <Screeners
               screeners={data.screeners}
@@ -211,7 +227,7 @@ function Shell() {
             />
           )}
           {active === 'guardrails' && <Guardrails summary={data.guardrails} />}
-          {active === 'settings' && <Readiness profile={profile} readiness={readiness} status={data.status} />}
+          {active === 'settings' && <Readiness profile={profile} readiness={readiness} status={data.status} dataHealth={data.dataHealth} />}
         </section>
       </main>
     </div>
@@ -230,6 +246,11 @@ function Overview({ data, loading }) {
 
   return (
     <div className="stack">
+      {data.status?.data_quality?.warning && (
+        <Banner tone={data.status.mock_mode ? 'warn' : 'info'} icon={AlertTriangle}>
+          {data.status.data_quality.warning}
+        </Banner>
+      )}
       <div className="metric-grid">
         <Metric title="Trading Stage" value={profile?.trading_stage?.toUpperCase() || '-'} detail={profile?.paper_mode ? 'Paper protected' : 'Live gate active'} icon={Shield} tone="info" />
         <Metric title="Capital" value={money(profile?.total_portfolio_value_inr)} detail={`Max risk ${money(profile?.max_risk_per_trade_inr)}`} icon={Wallet} tone="good" />
@@ -238,7 +259,7 @@ function Overview({ data, loading }) {
       </div>
 
       <div className="layout-2">
-        <Panel title="Morning Brief" action={loading ? 'Refreshing' : brief?.report_date}>
+        <Panel title="Morning Brief" action={loading ? 'Refreshing' : `${brief?.report_date || '-'} | ${brief?.data_quality?.mode || 'unknown'}`}>
           {!brief ? (
             <SkeletonGrid />
           ) : (
@@ -318,6 +339,289 @@ function Screeners({ screeners, loading, loadScreeners }) {
       </div>
     </div>
   )
+}
+
+function ResearchAssistant({ assets, loadingAssets, loadAssets }) {
+  const [assetType, setAssetType] = useState('equity')
+  const [symbol, setSymbol] = useState('RELIANCE')
+  const [horizon, setHorizon] = useState('swing')
+  const [capital, setCapital] = useState('')
+  const [report, setReport] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!assets && !loadingAssets) loadAssets()
+  }, [assets, loadingAssets])
+
+  const options = assetOptions(assets, assetType)
+  const runResearch = async () => {
+    const cleanSymbol = symbol.trim().toUpperCase()
+    setError('')
+    if (!/^[A-Z0-9&_-]{2,32}$/.test(cleanSymbol)) {
+      setError('Enter a valid supported symbol or fund code.')
+      setReport(null)
+      return
+    }
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        asset_type: assetType,
+        symbol: cleanSymbol,
+        horizon,
+      })
+      if (capital.trim()) params.set('capital_inr', capital.trim())
+      setReport(await api(`/api/research?${params.toString()}`))
+    } catch (requestError) {
+      setReport(null)
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Structured Research Assistant" action="A-J framework">
+        <div className="research-form">
+          <label>
+            <span>Asset Type</span>
+            <select value={assetType} onChange={(event) => {
+              const next = event.target.value
+              setAssetType(next)
+              setSymbol(defaultSymbol(next))
+              setReport(null)
+              setError('')
+            }}>
+              <option value="equity">Equity</option>
+              <option value="forex">Forex / Commodity</option>
+              <option value="mutual_fund">Mutual Fund</option>
+            </select>
+          </label>
+          <label>
+            <span>Symbol</span>
+            <input
+              value={symbol}
+              list={`research-${assetType}`}
+              onChange={(event) => setSymbol(event.target.value.toUpperCase())}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') runResearch()
+              }}
+            />
+            <datalist id={`research-${assetType}`}>
+              {options.map((item) => (
+                <option key={item.symbol} value={item.symbol}>{item.name}</option>
+              ))}
+            </datalist>
+          </label>
+          <label>
+            <span>Horizon</span>
+            <select value={horizon} onChange={(event) => setHorizon(event.target.value)}>
+              <option value="intraday">Intraday</option>
+              <option value="swing">Swing</option>
+              <option value="positional">Positional</option>
+              <option value="long-term">Long-term</option>
+            </select>
+          </label>
+          <label>
+            <span>Risk Capital INR</span>
+            <input
+              value={capital}
+              inputMode="numeric"
+              placeholder="Optional"
+              onChange={(event) => setCapital(event.target.value.replace(/[^\d]/g, ''))}
+            />
+          </label>
+          <button className="primary-button" onClick={runResearch} disabled={loading}>
+            <Brain size={17} />
+            {loading ? 'Researching' : 'Build Report'}
+          </button>
+        </div>
+        {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
+      </Panel>
+
+      {loading && <ScreenerSkeleton />}
+      {report && <ResearchReport report={report} />}
+    </div>
+  )
+}
+
+function ResearchReport({ report }) {
+  const sections = Object.entries(report.sections || {})
+  return (
+    <div className="stack research-report">
+      <Banner tone="warn" icon={Shield}>{report.operator_warning}</Banner>
+      {sections.map(([title, content]) => (
+        <Panel key={title} title={title}>
+          <ResearchContent value={content} />
+        </Panel>
+      ))}
+    </div>
+  )
+}
+
+function OptionsLab({ status }) {
+  const [form, setForm] = useState({
+    underlying: 'RELIANCE',
+    option_type: 'call',
+    strike: '3100',
+    expiry_days: '30',
+    lot_size: '250',
+    last_price: '42',
+    implied_vol_pct: '22',
+    underlying_price: '2950',
+    holding_qty: '250',
+    holding_avg: '2800',
+    portfolio_value: String(status?.profile?.total_portfolio_value_inr || 300000),
+    requested_lots: '1',
+  })
+  const [review, setReview] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  const runReview = async () => {
+    setError('')
+    setLoading(true)
+    try {
+      const params = new URLSearchParams(form)
+      setReview(await api(`/api/options-review?${params.toString()}`))
+    } catch (requestError) {
+      setReview(null)
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Covered-Call Options Lab" action="hedging-only">
+        <div className="options-form">
+          <Field label="Underlying" value={form.underlying} onChange={(value) => update('underlying', value.toUpperCase())} />
+          <label>
+            <span>Option Type</span>
+            <select value={form.option_type} onChange={(event) => update('option_type', event.target.value)}>
+              <option value="call">Call</option>
+              <option value="put">Put</option>
+            </select>
+          </label>
+          <Field label="Underlying Price" value={form.underlying_price} onChange={(value) => update('underlying_price', numericValue(value, true))} />
+          <Field label="Strike" value={form.strike} onChange={(value) => update('strike', numericValue(value, true))} />
+          <Field label="Days To Expiry" value={form.expiry_days} onChange={(value) => update('expiry_days', numericValue(value))} />
+          <Field label="Lot Size" value={form.lot_size} onChange={(value) => update('lot_size', numericValue(value))} />
+          <Field label="Option Price" value={form.last_price} onChange={(value) => update('last_price', numericValue(value, true))} />
+          <Field label="IV %" value={form.implied_vol_pct} onChange={(value) => update('implied_vol_pct', numericValue(value, true))} />
+          <Field label="Holding Qty" value={form.holding_qty} onChange={(value) => update('holding_qty', numericValue(value))} />
+          <Field label="Holding Avg" value={form.holding_avg} onChange={(value) => update('holding_avg', numericValue(value, true))} />
+          <Field label="Portfolio Value" value={form.portfolio_value} onChange={(value) => update('portfolio_value', numericValue(value, true))} />
+          <Field label="Lots" value={form.requested_lots} onChange={(value) => update('requested_lots', numericValue(value))} />
+          <button className="primary-button" onClick={runReview} disabled={loading}>
+            <Activity size={17} />
+            {loading ? 'Checking' : 'Review Setup'}
+          </button>
+        </div>
+        {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
+      </Panel>
+      {review && <OptionsReview review={review} />}
+    </div>
+  )
+}
+
+function Field({ label, value, onChange }) {
+  return (
+    <label>
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function OptionsReview({ review }) {
+  const greeks = review.greeks_snapshot?.greeks || {}
+  const hedge = review.hedge_review || {}
+  const payoff = review.payoff || {}
+  const finalDecision = review.final_decision || {}
+  const blocked = finalDecision.category === 'Blocked'
+  return (
+    <div className="stack">
+      <Banner tone="warn" icon={Shield}>{review.operator_warning}</Banner>
+      <div className="metric-grid">
+        <Metric title="Decision" value={finalDecision.category || '-'} detail={blocked ? 'Do not execute' : 'Manual confirmation required'} icon={blocked ? XCircle : CheckCircle2} tone={blocked ? 'bad' : 'good'} />
+        <Metric title="Delta" value={number(greeks.delta, 3)} detail={`Gamma ${number(greeks.gamma, 5)}`} icon={Activity} tone="info" />
+        <Metric title="Theta / Day" value={number(greeks.theta, 2)} detail={`Vega ${number(greeks.vega, 2)}`} icon={Gauge} tone="warn" />
+        <Metric title="Premium" value={payoff.available ? money(payoff.premium_income) : '-'} detail={hedge.status || '-'} icon={Wallet} tone="good" />
+      </div>
+      <div className="layout-2">
+        <Panel title="Safety Gates">
+          <div className="gate-grid">
+            {(review.safety_gates || []).map((gate) => (
+              <div className={gate.passed ? 'gate pass' : 'gate block'} key={gate.name}>
+                {gate.passed ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                <div><strong>{gate.name}</strong><span>{gate.detail}</span></div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Payoff Snapshot">
+          <div className="research-kv">
+            {payoff.available ? (
+              Object.entries(payoff).map(([key, value]) => (
+                <div className="research-kv-row" key={key}>
+                  <span>{labelize(key)}</span>
+                  <strong>{renderResearchValue(value)}</strong>
+                </div>
+              ))
+            ) : (
+              <Empty label={payoff.reason || 'Payoff unavailable.'} />
+            )}
+          </div>
+        </Panel>
+      </div>
+      <Panel title="Final Explanation">
+        <p className="research-text">{finalDecision.explanation}</p>
+      </Panel>
+    </div>
+  )
+}
+
+function ResearchContent({ value }) {
+  if (Array.isArray(value)) {
+    return (
+      <ul className="research-list">
+        {value.map((item, index) => <li key={index}>{renderResearchValue(item)}</li>)}
+      </ul>
+    )
+  }
+  if (value && typeof value === 'object') {
+    return (
+      <div className="research-kv">
+        {Object.entries(value).map(([key, item]) => (
+          <div className="research-kv-row" key={key}>
+            <span>{labelize(key)}</span>
+            <strong>{renderResearchValue(item)}</strong>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return <p className="research-text">{renderResearchValue(value)}</p>
+}
+
+function renderResearchValue(value) {
+  if (Array.isArray(value)) {
+    if (!value.length) return 'None flagged'
+    return value.map((item) => renderResearchValue(item)).join('; ')
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, item]) => `${labelize(key)}: ${renderResearchValue(item)}`)
+      .join(' | ')
+  }
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  if (value === null || value === undefined || value === '') return '-'
+  return String(value)
 }
 
 function Candidate({ candidate, rank }) {
@@ -407,8 +711,14 @@ function ForexMacro({ forex, morning }) {
   const global = morning?.sections?.global || {}
   const rates = forex?.rates || []
   const overlay = forex?.overlay || {}
+  const isMock = Boolean(forex?.data_quality?.mode === 'mock' || forex?.health?.mock_mode)
   return (
     <div className="stack">
+      {forex?.data_quality?.warning && (
+        <Banner tone={isMock ? 'warn' : 'info'} icon={AlertTriangle}>
+          {forex.data_quality.warning}
+        </Banner>
+      )}
       <div className="metric-grid">
         <Metric title="USD/INR" value={number(global.india_fx?.usd_inr, 2)} detail={pct(global.india_fx?.usd_inr_5d_change_pct)} icon={LineChart} tone="info" />
         <Metric title="US 10Y" value={`${number(global.rates?.us_10y_yield, 2)}%`} detail={`${number(global.rates?.us_10y_5d_change_bps, 0)} bps`} icon={Activity} tone="warn" />
@@ -416,7 +726,7 @@ function ForexMacro({ forex, morning }) {
         <Metric title="DXY Regime" value={overlay.dxy_regime || global.dxy?.regime || '-'} detail={pct(overlay.dxy_5d_change_pct)} icon={Gauge} tone="info" />
       </div>
       <div className="layout-2">
-        <Panel title="Live FX Watchlist">
+        <Panel title={isMock ? 'Simulated FX Watchlist' : 'Live FX Watchlist'} action={forex?.data_quality?.mode || '-'}>
           <div className="rate-grid">
             {rates.map((rate) => (
               <div className="rate-tile" key={rate.pair}>
@@ -555,7 +865,7 @@ function Guardrails({ summary }) {
   )
 }
 
-function Readiness({ profile, readiness, status }) {
+function Readiness({ profile, readiness, status, dataHealth }) {
   return (
     <div className="stack">
       <div className="metric-grid">
@@ -579,6 +889,17 @@ function Readiness({ profile, readiness, status }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </Panel>
+      <Panel title="Data Accuracy Gates" action={dataHealth?.overall_mode || status?.data_quality?.mode || '-'}>
+        <div className="gate-grid">
+          {(dataHealth?.checks || []).map((check) => (
+            <div className={check.passed ? 'gate pass' : 'gate block'} key={check.name}>
+              {check.passed ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+              <div><strong>{check.name}</strong><span>{check.status}: {check.detail}</span></div>
+            </div>
+          ))}
+          {!dataHealth?.checks?.length && <Empty label="Data health has not loaded yet." />}
         </div>
       </Panel>
     </div>
@@ -678,6 +999,30 @@ function labelize(value) {
     .replace(/^s(\d)_/, 'S$1 ')
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function assetOptions(assets, assetType) {
+  if (!assets) return []
+  if (assetType === 'equity') return assets.equities || []
+  if (assetType === 'forex') return assets.forex || []
+  if (assetType === 'mutual_fund') return assets.mutual_funds || []
+  return []
+}
+
+function defaultSymbol(assetType) {
+  return {
+    equity: 'RELIANCE',
+    forex: 'USDINR',
+    mutual_fund: 'PPFAS_FLEXI',
+  }[assetType] || 'RELIANCE'
+}
+
+function numericValue(value, allowDecimal = false) {
+  const pattern = allowDecimal ? /[^\d.]/g : /[^\d]/g
+  const cleaned = String(value || '').replace(pattern, '')
+  if (!allowDecimal) return cleaned
+  const parts = cleaned.split('.')
+  return parts.length <= 1 ? cleaned : `${parts[0]}.${parts.slice(1).join('')}`
 }
 
 function cleanText(value) {

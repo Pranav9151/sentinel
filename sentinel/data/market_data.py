@@ -61,6 +61,10 @@ class MarketDataStore:
         else:
             raw = self._fetch_nsdl_flows(trade_date)
             if raw is None:
+                logger.error(
+                    "FII/DII live ingest skipped for %s: NSDL provider is unavailable.",
+                    trade_date,
+                )
                 return False
 
         date_str = trade_date.isoformat()
@@ -110,7 +114,14 @@ class MarketDataStore:
         """
         flows = self.get_fii_dii(days=days)
         if not flows:
-            return {"trend": "unknown", "net_total_cr": 0, "daily_avg_cr": 0}
+            return {
+                "trend": "unknown",
+                "net_total_cr": None,
+                "daily_avg_cr": None,
+                "days_analysed": 0,
+                "is_bullish": None,
+                "data_quality": _quality("fii_dii_flows", "no stored flow data"),
+            }
 
         net_total = sum(f.get("fii_net_cr") or 0 for f in flows)
         daily_avg = net_total / len(flows)
@@ -132,6 +143,7 @@ class MarketDataStore:
             "daily_avg_cr": round(daily_avg, 0),
             "days_analysed": len(flows),
             "is_bullish": daily_avg > 0,
+            "data_quality": _quality("fii_dii_flows", "stored flow data"),
         }
 
     def get_latest_fii_dii(self) -> Optional[dict[str, Any]]:
@@ -157,6 +169,12 @@ class MarketDataStore:
             symbols = mock_gsm_asm_list()
         else:
             symbols = self._fetch_nse_surveillance()
+            if not symbols:
+                logger.error(
+                    "GSM/ASM live refresh skipped: NSE surveillance provider is unavailable. "
+                    "Existing active list preserved."
+                )
+                return 0
 
         now_str = utc_now().isoformat()
         today_str = utc_now().date().isoformat()
@@ -225,15 +243,22 @@ class MarketDataStore:
         In LIVE mode: from NSE market data endpoints.
         """
         if MOCK_MODE:
-            return mock_market_internals()
+            data = mock_market_internals()
+            data["available"] = True
+            data["data_quality"] = _quality("mock_market_internals", "simulated test data")
+            return data
 
         # Live: fetch from NSE API
         # Placeholder — implement live fetch in Sprint 4
-        return mock_market_internals()
+        return _unavailable_market_internals(
+            "Live NSE market internals provider is not configured."
+        )
 
     def get_india_vix(self) -> Optional[float]:
         """Get current India VIX level."""
         internals = self.get_market_internals()
+        if internals.get("available") is False:
+            return None
         return internals.get("india_vix")
 
     def is_defensive_mode(self, vix_threshold: float = 22.0) -> bool:
@@ -257,6 +282,18 @@ class MarketDataStore:
         """
         internals = self.get_market_internals()
         fii_trend = self.get_fii_trend(days=5)
+        if internals.get("available") is False:
+            return {
+                "bias": "UNKNOWN",
+                "score": None,
+                "vix": None,
+                "ad_ratio": None,
+                "nifty_change_pct": None,
+                "pcr": None,
+                "fii_trend": fii_trend["trend"],
+                "computed_at": utc_now().isoformat(),
+                "data_quality": _quality("market_bias", "market internals unavailable"),
+            }
         vix = internals.get("india_vix", 15)
         ad_ratio = internals.get("advance_decline_ratio", 1.0)
         nifty_change = internals.get("nifty50_change_pct", 0)
@@ -316,6 +353,7 @@ class MarketDataStore:
             "pcr": pcr,
             "fii_trend": fii_trend["trend"],
             "computed_at": utc_now().isoformat(),
+            "data_quality": _quality("market_bias", "computed from available inputs"),
         }
 
     # ─────────────────────────────────────────────
@@ -425,10 +463,38 @@ class MarketDataStore:
 
     def _fetch_nsdl_flows(self, trade_date: date) -> Optional[dict[str, Any]]:
         """Fetch FII/DII flows from NSDL. Sprint 4 implementation."""
-        logger.info("Live NSDL flow provider unavailable. Using safe mock fallback.")
-        return mock_fii_dii_data()
+        logger.error("Live NSDL flow provider unavailable for %s.", trade_date)
+        return None
 
     def _fetch_nse_surveillance(self) -> list[str]:
         """Fetch GSM/ASM list from NSE. Sprint 4 implementation."""
-        logger.info("Live NSE surveillance provider unavailable. Using safe mock fallback.")
-        return mock_gsm_asm_list()
+        logger.error("Live NSE surveillance provider unavailable.")
+        return []
+
+
+def _quality(source: str, note: str) -> dict[str, Any]:
+    return {
+        "mode": "mock" if MOCK_MODE else "live",
+        "is_live": not MOCK_MODE,
+        "source": source,
+        "note": note,
+        "timestamp": utc_now().isoformat(),
+    }
+
+
+def _unavailable_market_internals(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "nifty50_close": None,
+        "nifty50_change_pct": None,
+        "banknifty_close": None,
+        "banknifty_change_pct": None,
+        "india_vix": None,
+        "advance_decline_ratio": None,
+        "advances": None,
+        "declines": None,
+        "nifty_pcr": None,
+        "new_52w_highs": None,
+        "new_52w_lows": None,
+        "data_quality": _quality("nse_market_internals", reason),
+    }

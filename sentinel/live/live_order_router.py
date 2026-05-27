@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -42,6 +43,7 @@ from sentinel.ops.paper_trader import PaperTrader
 logger = logging.getLogger(__name__)
 
 MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"
+_SYMBOL_RE = re.compile(r"^[A-Z0-9&_-]{2,32}$")
 KITE_OPS_LIMIT = 5   # Hard cap: 5 orders per second (ARCHITECTURE_v5.md §13)
 
 
@@ -135,12 +137,28 @@ class LiveOrderRouter:
         Check result.approved and result.executed.
         """
         order_id = str(uuid4())
+        validation_errors: list[str] = []
+        symbol = str(symbol or "").upper().strip()
+        direction = str(direction or "").lower().strip()
+        quantity = self._clean_quantity(quantity, validation_errors)
+        entry_price = self._clean_decimal(entry_price, "entry_price", validation_errors)
+        stop_loss = self._clean_decimal(stop_loss, "stop_loss", validation_errors)
+        target_1 = self._clean_decimal(target_1, "target_1", validation_errors)
+        if target_2 is not None:
+            target_2 = self._clean_decimal(target_2, "target_2", validation_errors)
+        validation_errors.extend(
+            self._validate_order_shape(
+                symbol, direction, quantity, entry_price, stop_loss, target_1
+            )
+        )
 
         # Proposed risk
         if direction == "long":
             proposed_risk = max(Decimal("0"), (entry_price - stop_loss) * quantity)
-        else:
+        elif direction == "short":
             proposed_risk = max(Decimal("0"), (stop_loss - entry_price) * quantity)
+        else:
+            proposed_risk = Decimal("0")
 
         allocated = self._sm.allocated_capital_inr
         risk_pct = float(proposed_risk / allocated * 100) if allocated > 0 else 0.0
@@ -168,6 +186,11 @@ class LiveOrderRouter:
             executed_at="",
             notes=notes,
         )
+
+        if validation_errors:
+            result.rejection_reason = "Invalid order request: " + " | ".join(validation_errors)
+            self._audit(result)
+            return result
 
         # ── 1. Kill switch ────────────────────────────────────────────────────
         if is_kill_active():
@@ -221,6 +244,13 @@ class LiveOrderRouter:
                 result.rejection_reason = f"Paper order failed: {e}"
                 logger.error(f"[LiveOrderRouter] Paper order failed {symbol}: {e}")
         else:
+            readiness_blocks = self._live_readiness_blocks()
+            if readiness_blocks:
+                result.approved = False
+                result.execution_mode = "blocked"
+                result.rejection_reason = "Live readiness blocked: " + " | ".join(readiness_blocks)
+                self._audit(result)
+                return result
             result.execution_mode = "live"
             try:
                 broker_id = self._execute_live(
@@ -241,6 +271,64 @@ class LiveOrderRouter:
 
         self._audit(result)
         return result
+
+    @staticmethod
+    def _clean_quantity(quantity: int, errors: list[str]) -> int:
+        if isinstance(quantity, bool) or not isinstance(quantity, int):
+            errors.append("quantity must be a positive whole number")
+            return 0
+        if quantity <= 0:
+            errors.append("quantity must be greater than zero")
+            return 0
+        return quantity
+
+    @staticmethod
+    def _clean_decimal(value: Any, name: str, errors: list[str]) -> Decimal:
+        try:
+            dec = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            errors.append(f"{name} must be a positive finite number")
+            return Decimal("0")
+        if not dec.is_finite() or dec <= 0:
+            errors.append(f"{name} must be a positive finite number")
+            return Decimal("0")
+        return dec
+
+    @staticmethod
+    def _validate_order_shape(
+        symbol: str,
+        direction: str,
+        quantity: int,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        target_1: Decimal,
+    ) -> list[str]:
+        errors: list[str] = []
+        if not _SYMBOL_RE.fullmatch(symbol):
+            errors.append("symbol must be a supported uppercase market symbol")
+        if direction not in {"long", "short"}:
+            errors.append("direction must be long or short")
+        if quantity <= 0 or min(entry_price, stop_loss, target_1) <= 0:
+            return errors
+        if direction == "long":
+            if stop_loss >= entry_price:
+                errors.append("long stop_loss must be below entry_price")
+            if target_1 <= entry_price:
+                errors.append("long target_1 must be above entry_price")
+        if direction == "short":
+            if stop_loss <= entry_price:
+                errors.append("short stop_loss must be above entry_price")
+            if target_1 >= entry_price:
+                errors.append("short target_1 must be below entry_price")
+        return errors
+
+    @staticmethod
+    def _live_readiness_blocks() -> list[str]:
+        from sentinel.core.config import load_config
+        from sentinel.ops.deployment_readiness import build_deployment_readiness_report
+
+        report = build_deployment_readiness_report(load_config())
+        return [f"{check.name}: {check.detail}" for check in report.blockers]
 
     def record_close(
         self,

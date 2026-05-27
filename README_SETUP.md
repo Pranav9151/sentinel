@@ -1,15 +1,24 @@
 # Project Sentinel v5.0 - Operator Handoff
 
-Project Sentinel is a trading research, paper/live-control, and operator
-discipline system for a solo Indian retail operator. The current codebase is
-complete through the Sprint 8 research-factory/production-grade modules that
-can be built locally without fabricating real live-trading evidence.
+Project Sentinel is an AI-powered Trading Research Assistant for traders and
+investors. It helps analyze stocks, mutual funds, ETFs, forex, commodities,
+sectors, news, institutional activity, fundamentals, technicals, option-risk
+profiles, and portfolio risk before decisions are made.
+
+Sentinel does not execute trades automatically. It provides structured trade
+plans, investment research, entry/exit zones, scenario analysis, option Greeks,
+covered-call reviews, data-quality gates, and risk-management insights so the
+user can make informed real-time trading decisions and execute manually.
+
+The current codebase is complete through the Sprint 8 research-factory and
+production-grade modules that can be built locally without fabricating real
+live-trading evidence.
 
 ## Current Status
 
 Code-side delivery is complete for:
 
-- React operator console with Python JSON API
+- React AI research assistant console with Python JSON API
 - Legacy Streamlit dashboard and settings
 - Mock/live connector boundary
 - Historical, fundamental, market, forex, and MF data modules
