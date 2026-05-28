@@ -12,6 +12,7 @@ from sentinel.ui.react_api import (
     _options_payload,
     _research_payload,
     _forex_payload,
+    _final_shortlist_payload,
     _status_payload,
     _data_health_payload,
     _validated_symbol,
@@ -172,6 +173,39 @@ class TestReactApiValidation:
         assert payload["asset_type"] == "mutual_fund"
         assert payload["symbol"] == "PPFAS_FLEXI"
         assert list(payload["sections"]) == EXPECTED_RESEARCH_SECTIONS
+
+    def test_final_shortlist_returns_ranked_research_only_entries(self):
+        payload = _final_shortlist_payload({"symbols": ["RELIANCE,TCS,INFY"], "limit": ["3"]})
+
+        assert payload["title"] == "Final Shortlist"
+        assert payload["research_only"] is True
+        assert payload["auto_execution_enabled"] is False
+        assert len(payload["entries"]) == 3
+        first = payload["entries"][0]
+        assert first["rank"] == 1
+        assert first["symbol"] == "RELIANCE"
+        assert first["action"] in {
+            "Strong watchlist candidate",
+            "Buy only above confirmation level",
+            "Accumulate on dips",
+            "Short-term trade candidate",
+            "Long-term investment candidate",
+            "Avoid",
+            "High risk / speculative",
+            "Wait for better entry",
+            "Wait for pullback",
+        }
+        assert "reason" in first
+        assert first["live_market_confirmation_required"] is True
+
+    def test_final_shortlist_rejects_unknown_or_unsafe_symbols(self):
+        with pytest.raises(ApiError) as unsafe_exc:
+            _final_shortlist_payload({"symbols": ["<script>"]})
+        with pytest.raises(ApiError) as unknown_exc:
+            _final_shortlist_payload({"symbols": ["NOTLISTED999"]})
+
+        assert unsafe_exc.value.status == HTTPStatus.BAD_REQUEST
+        assert unknown_exc.value.status == HTTPStatus.BAD_REQUEST
 
     def test_options_review_accepts_covered_call(self):
         payload = _options_payload(

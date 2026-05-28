@@ -530,6 +530,248 @@ def _research_payload(query: dict[str, list[str]]) -> dict[str, Any]:
         raise ApiError(HTTPStatus.BAD_REQUEST, str(exc), {"symbol": symbol})
 
 
+def _final_shortlist_payload(query: dict[str, list[str]]) -> dict[str, Any]:
+    limit = _int_param(query, "limit", 3, min_value=1, max_value=10)
+    requested_symbols = _requested_equity_symbols(query)
+    screener_snapshot = _cached("screeners", 120, lambda: ScreenerRunner().run_all())
+    candidate_map = _equity_candidate_map(screener_snapshot)
+    symbols = _shortlist_symbols(requested_symbols, candidate_map, limit)
+    profile = _profile()
+    entries = []
+
+    for symbol in symbols[:limit]:
+        report = build_research_report(
+            ResearchRequest(
+                asset_type="equity",
+                symbol=symbol,
+                horizon="swing",
+                capital_inr=float(profile.max_risk_per_trade_inr),
+            ),
+            profile,
+        )
+        entries.append(
+            _shortlist_entry_from_report(
+                report=report,
+                rank=len(entries) + 1,
+                candidate=candidate_map.get(symbol),
+            )
+        )
+
+    return {
+        "generated_at": utc_now(),
+        "title": "Final Shortlist",
+        "research_only": True,
+        "auto_execution_enabled": False,
+        "selection_method": (
+            "User watchlist plus screener-confirmed equities, ranked by conviction and research checks."
+            if requested_symbols
+            else "Screener-confirmed equities first, then liquid default watchlist for morning review."
+        ),
+        "operator_warning": (
+            "This shortlist is decision support only. Confirm live price, volume, spreads, news, "
+            "market breadth and your risk limits before placing any manual order."
+        ),
+        "data_quality": {
+            "mode": "mock" if MOCK_MODE else "live",
+            "is_live": not MOCK_MODE,
+            "warning": (
+                "MOCK_MODE=true. Shortlist levels are simulated and will not match live markets."
+                if MOCK_MODE
+                else "Live/partial-live mode. Use only entries with fresh provider timestamps."
+            ),
+            "live_market_confirmation_required": True,
+        },
+        "screeners_summary": screener_snapshot.get("_summary", {}),
+        "entries": entries,
+    }
+
+
+def _requested_equity_symbols(query: dict[str, list[str]]) -> list[str]:
+    raw_values = query.get("symbols", [])
+    symbols: list[str] = []
+    for raw_value in raw_values:
+        for part in str(raw_value).split(","):
+            if not part.strip():
+                continue
+            symbol = _validated_symbol(part)
+            if symbol not in ALL_MOCK_STOCKS:
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    f"{symbol} is not in the supported NSE equity universe.",
+                    {"symbol": symbol},
+                )
+            if symbol not in symbols:
+                symbols.append(symbol)
+    return symbols[:10]
+
+
+def _equity_candidate_map(screeners: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    aggregated: dict[str, dict[str, Any]] = {}
+    for screener_name, result in screeners.items():
+        if screener_name.startswith("_") or not isinstance(result, dict):
+            continue
+        for candidate in result.get("candidates", []):
+            symbol = str(candidate.get("symbol", "")).upper()
+            if symbol not in ALL_MOCK_STOCKS:
+                continue
+            existing = aggregated.get(symbol)
+            source = str(candidate.get("screener") or screener_name)
+            if existing is None or float(candidate.get("conviction_score") or 0) > float(existing.get("conviction_score") or 0):
+                aggregated[symbol] = {**candidate, "source_screeners": [source]}
+            elif source not in existing.setdefault("source_screeners", []):
+                existing["source_screeners"].append(source)
+    return dict(
+        sorted(
+            aggregated.items(),
+            key=lambda item: float(item[1].get("conviction_score") or 0),
+            reverse=True,
+        )
+    )
+
+
+def _shortlist_symbols(
+    requested_symbols: list[str],
+    candidate_map: dict[str, dict[str, Any]],
+    limit: int,
+) -> list[str]:
+    default_watchlist = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "LT", "SBIN", "BHARTIARTL"]
+    symbols: list[str] = []
+    for source in (requested_symbols, list(candidate_map), default_watchlist):
+        for symbol in source:
+            if symbol in ALL_MOCK_STOCKS and symbol not in symbols:
+                symbols.append(symbol)
+            if len(symbols) >= limit:
+                return symbols
+    return symbols
+
+
+def _shortlist_entry_from_report(
+    report: dict[str, Any],
+    rank: int,
+    candidate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    overview = report["sections"]["C. Asset Overview"]
+    plan = report["sections"]["G. Trade or Investment Plan"]
+    decision = report["sections"]["I. Final Decision"]
+    summary = report["sections"]["A. Executive Summary"]
+    data_quality = report["sections"]["J. Data Quality Warning"]
+    action = _shortlist_action(decision.get("action_category"), candidate)
+    entry_zone = _candidate_or_plan(candidate, "entry_low", plan.get("entry_zone"))
+    if candidate and candidate.get("entry_low") is not None and candidate.get("entry_high") is not None:
+        entry_zone = [candidate.get("entry_low"), candidate.get("entry_high")]
+    risk = _shortlist_risk(summary, candidate)
+
+    return {
+        "rank": rank,
+        "symbol": report["symbol"],
+        "name": overview.get("name"),
+        "category": overview.get("category"),
+        "sector": ALL_MOCK_STOCKS.get(report["symbol"], {}).get("sector"),
+        "latest_available_price": overview.get("current_price_or_latest_available"),
+        "data_timestamp": overview.get("data_timestamp"),
+        "source_screeners": candidate.get("source_screeners", []) if candidate else [],
+        "action": action,
+        "entry_zone": entry_zone if action != "Avoid" else None,
+        "stop_loss": candidate.get("stop_loss") if candidate else plan.get("stop_loss"),
+        "target_1": candidate.get("target_1") if candidate else plan.get("target_1"),
+        "target_2": candidate.get("target_2") if candidate else plan.get("target_2"),
+        "risk_reward": candidate.get("rr_ratio") if candidate else plan.get("risk_reward_ratio"),
+        "confidence": _shortlist_confidence(decision, candidate),
+        "risk": risk,
+        "risk_score": _shortlist_risk_score(risk, decision),
+        "suitability": decision.get("suitability"),
+        "reason": _shortlist_reason(report, candidate, action),
+        "warnings": _shortlist_warnings(candidate, data_quality),
+        "live_market_confirmation_required": bool(data_quality.get("live_market_confirmation_required")),
+    }
+
+
+def _candidate_or_plan(candidate: dict[str, Any] | None, key: str, fallback: Any) -> Any:
+    if candidate and candidate.get(key) is not None:
+        return candidate[key]
+    return fallback
+
+
+def _shortlist_action(action_category: Any, candidate: dict[str, Any] | None) -> str:
+    if candidate:
+        score = float(candidate.get("conviction_score") or 0)
+        rr = float(candidate.get("rr_ratio") or 0)
+        if score >= 75 and rr >= 2:
+            return "Buy only above confirmation level"
+        if score >= 65 and rr >= 2:
+            return "Wait for pullback"
+    mapping = {
+        "Strong Watchlist Candidate": "Strong watchlist candidate",
+        "Buy Only Above Confirmation Level": "Buy only above confirmation level",
+        "Accumulate on Dips": "Accumulate on dips",
+        "Short-Term Trade Candidate": "Short-term trade candidate",
+        "Long-Term Investment Candidate": "Long-term investment candidate",
+        "Avoid": "Avoid",
+        "High Risk / Speculative": "High risk / speculative",
+        "Wait for Better Entry": "Wait for better entry",
+    }
+    return mapping.get(str(action_category), "Wait for better entry")
+
+
+def _shortlist_confidence(decision: dict[str, Any], candidate: dict[str, Any] | None) -> float:
+    if candidate and candidate.get("conviction_score") is not None:
+        return round(min(max(float(candidate["conviction_score"]) / 10, 0), 10), 1)
+    return round(float(decision.get("confidence_score_out_of_10") or 0), 1)
+
+
+def _shortlist_risk(summary: dict[str, Any], candidate: dict[str, Any] | None) -> str:
+    if not candidate:
+        return str(summary.get("risk_level") or "Medium")
+    score = float(candidate.get("conviction_score") or 0)
+    rr = float(candidate.get("rr_ratio") or 0)
+    if rr < 2:
+        return "High"
+    if score >= 80:
+        return "Medium"
+    if score >= 70:
+        return "Medium-High"
+    return "High"
+
+
+def _shortlist_risk_score(risk: str, decision: dict[str, Any]) -> int:
+    mapping = {"Low": 3, "Medium": 5, "Medium-High": 6, "High": 8, "Very High": 9}
+    return mapping.get(risk, int(decision.get("risk_score_out_of_10") or 6))
+
+
+def _shortlist_reason(report: dict[str, Any], candidate: dict[str, Any] | None, action: str) -> str:
+    if candidate and candidate.get("thesis"):
+        return _trim_text(str(candidate["thesis"]), 260)
+    sections = report["sections"]
+    final_explanation = str(sections["I. Final Decision"].get("final_explanation", ""))
+    trend = str(sections["E. Technical View"].get("current_trend", ""))
+    strengths = sections["D. Fundamental View"].get("key_strengths", [])
+    weaknesses = sections["D. Fundamental View"].get("key_weaknesses", [])
+    if action == "Avoid":
+        risk_text = ("; ".join(map(str, weaknesses[:2])) or "risk-reward or confirmation is weak").rstrip(".")
+        reason = f"{final_explanation} Key risks: {risk_text}."
+    else:
+        reason = f"{final_explanation} Trend: {trend}. Strengths: {'; '.join(map(str, strengths[:2])) or 'needs live confirmation'}."
+    return _trim_text(reason, 260)
+
+
+def _shortlist_warnings(candidate: dict[str, Any] | None, data_quality: dict[str, Any]) -> list[str]:
+    warnings = []
+    if candidate:
+        warnings.extend(str(item) for item in candidate.get("risks", [])[:3])
+    for key in ("missing_data", "stale_data", "assumptions"):
+        value = data_quality.get(key, [])
+        if isinstance(value, list):
+            warnings.extend(str(item) for item in value[:2])
+    return list(dict.fromkeys(warnings))[:6]
+
+
+def _trim_text(value: str, max_length: int) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= max_length:
+        return compact
+    return f"{compact[: max_length - 3].rstrip()}..."
+
+
 def _validated_symbol(raw_symbol: str) -> str:
     symbol = str(raw_symbol or "").upper().strip()
     if not _SYMBOL_PATTERN.fullmatch(symbol):
@@ -638,6 +880,9 @@ class SentinelApiHandler(SimpleHTTPRequestHandler):
                 return
             if parsed.path == "/api/research":
                 self._send_json(_research_payload(query))
+                return
+            if parsed.path == "/api/final-shortlist":
+                self._send_json(_final_shortlist_payload(query))
                 return
             if parsed.path == "/api/options-review":
                 self._send_json(_options_payload(query))

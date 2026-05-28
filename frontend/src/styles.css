@@ -371,6 +371,7 @@ button {
 .stat:hover,
 .rate-tile:hover,
 .candidate:hover,
+.shortlist-item:hover,
 .event:hover,
 .gate:hover,
 .risk-item:hover {
@@ -387,6 +388,7 @@ button {
 
 .risk-list,
 .candidate-list,
+.shortlist-list,
 .event-list,
 .strategy-bars,
 .gate-grid {
@@ -400,6 +402,7 @@ button {
 
 .risk-item,
 .candidate,
+.shortlist-item,
 .event,
 .gate {
   display: flex;
@@ -442,6 +445,82 @@ button {
 .candidate-main {
   min-width: 0;
   width: 100%;
+}
+
+.shortlist-list {
+  gap: 14px;
+}
+
+.shortlist-item {
+  display: grid;
+  gap: 13px;
+  padding: 16px;
+}
+
+.shortlist-item.avoid {
+  border-color: rgba(248, 113, 113, 0.34);
+}
+
+.shortlist-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.shortlist-title {
+  min-width: 0;
+}
+
+.shortlist-title strong,
+.shortlist-title span {
+  display: block;
+}
+
+.shortlist-title strong {
+  font-size: 18px;
+}
+
+.shortlist-title span,
+.shortlist-reason {
+  color: #9fb0c5;
+}
+
+.shortlist-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.shortlist-field {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #223142;
+  border-radius: 8px;
+  background: #0b121b;
+}
+
+.shortlist-field span,
+.shortlist-field strong {
+  display: block;
+}
+
+.shortlist-field span {
+  color: #8fa0b7;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.shortlist-field strong {
+  margin-top: 5px;
+  color: #eef4ff;
+  overflow-wrap: anywhere;
+}
+
+.shortlist-reason {
+  margin: 0;
+  line-height: 1.55;
 }
 
 .candidate-title {
@@ -827,6 +906,7 @@ select:focus {
   .screener-grid,
   .research-form,
   .options-form,
+  .shortlist-grid,
   .layout-2 {
     grid-template-columns: 1fr;
   }
@@ -865,6 +945,7 @@ select:focus {
 
   .topbar,
   .candidate-title,
+  .shortlist-head,
   .search-row {
     align-items: flex-start;
     flex-direction: column;
@@ -885,6 +966,10 @@ select:focus {
   }
 
   .strategy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .shortlist-head {
     grid-template-columns: 1fr;
   }
 

@@ -34,6 +34,7 @@ import './styles.css'
 
 const views = [
   { id: 'overview', label: 'Overview', icon: Gauge },
+  { id: 'shortlist', label: 'Shortlist', icon: CheckCircle2 },
   { id: 'research', label: 'Research', icon: Brain },
   { id: 'options', label: 'Options Lab', icon: Activity },
   { id: 'screeners', label: 'Screeners', icon: Target },
@@ -203,6 +204,13 @@ function Shell() {
 
         <section className="content">
           {active === 'overview' && <Overview data={data} loading={loading} />}
+          {active === 'shortlist' && (
+            <FinalShortlist
+              shortlist={data.shortlist}
+              loading={Boolean(pending.shortlist)}
+              loadShortlist={(force = false) => loadResource('shortlist', '/api/final-shortlist', force)}
+            />
+          )}
           {active === 'research' && (
             <ResearchAssistant
               assets={data.researchAssets}
@@ -302,6 +310,81 @@ function Overview({ data, loading }) {
         </Panel>
       </div>
     </div>
+  )
+}
+
+function FinalShortlist({ shortlist, loading, loadShortlist }) {
+  useEffect(() => {
+    if (!shortlist && !loading) loadShortlist(false)
+  }, [shortlist, loading])
+
+  const entries = shortlist?.entries || []
+  return (
+    <div className="stack">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Morning and live-market decision support</p>
+          <h3>{loading ? 'Building Shortlist...' : shortlist?.title || 'Final Shortlist'}</h3>
+        </div>
+        <button className="primary-button" onClick={() => loadShortlist(true)} disabled={loading}>
+          <RefreshCcw size={17} className={loading ? 'spin' : ''} />
+          {loading ? 'Refreshing' : 'Refresh Shortlist'}
+        </button>
+      </div>
+
+      {shortlist?.data_quality?.warning && (
+        <Banner tone={shortlist.data_quality.mode === 'mock' ? 'warn' : 'info'} icon={AlertTriangle}>
+          {shortlist.data_quality.warning}
+        </Banner>
+      )}
+      {shortlist?.operator_warning && <Banner tone="warn" icon={Shield}>{shortlist.operator_warning}</Banner>}
+
+      {loading && !entries.length && <ScreenerSkeleton />}
+      <div className="shortlist-list">
+        {entries.map((entry) => <ShortlistItem key={entry.symbol} entry={entry} />)}
+        {!loading && !entries.length && <Empty label="No shortlist entries are available yet." />}
+      </div>
+    </div>
+  )
+}
+
+function ShortlistItem({ entry }) {
+  const avoid = entry.action === 'Avoid'
+  const fields = [
+    ['Action', entry.action],
+    ['Entry Zone', avoid ? null : entry.entry_zone],
+    ['Stop-Loss', avoid ? null : entry.stop_loss],
+    ['Target 1', avoid ? null : entry.target_1],
+    ['Target 2', avoid ? null : entry.target_2],
+    ['Risk-Reward', avoid ? null : entry.risk_reward],
+    ['Confidence', entry.confidence],
+    ['Risk', entry.risk],
+  ]
+  return (
+    <article className={`shortlist-item ${avoid ? 'avoid' : ''}`}>
+      <div className="shortlist-head">
+        <div className="rank">{entry.rank}</div>
+        <div className="shortlist-title">
+          <strong>{entry.symbol}</strong>
+          <span>{entry.name} {entry.sector ? `| ${entry.sector}` : ''}</span>
+        </div>
+        <Badge tone={avoid ? 'bad' : riskTone(entry.risk)}>{entry.action}</Badge>
+      </div>
+      <div className="shortlist-grid">
+        {fields.map(([label, value]) => (
+          <div className="shortlist-field" key={label}>
+            <span>{label}</span>
+            <strong>{shortlistValue(label, value)}</strong>
+          </div>
+        ))}
+      </div>
+      <p className="shortlist-reason"><b>Reason:</b> {cleanText(entry.reason)}</p>
+      {!!entry.warnings?.length && (
+        <div className="candidate-meta">
+          {entry.warnings.slice(0, 4).map((warning) => <span key={warning}>{cleanText(warning)}</span>)}
+        </div>
+      )}
+    </article>
   )
 }
 
@@ -622,6 +705,24 @@ function renderResearchValue(value) {
   if (value === false) return 'No'
   if (value === null || value === undefined || value === '') return '-'
   return String(value)
+}
+
+function shortlistValue(label, value) {
+  if (value === null || value === undefined || value === '') return '-'
+  if (label === 'Entry Zone' && Array.isArray(value)) {
+    return value.length >= 2 ? `${money(value[0])} to ${money(value[1])}` : money(value[0])
+  }
+  if (['Stop-Loss', 'Target 1', 'Target 2'].includes(label)) return money(value)
+  if (label === 'Risk-Reward') return Number.isNaN(Number(value)) ? String(value) : `1:${number(value, 1)}`
+  if (label === 'Confidence') return `${number(value, 1)}/10`
+  return String(value)
+}
+
+function riskTone(risk) {
+  const normalized = String(risk || '').toLowerCase()
+  if (normalized.includes('very') || normalized.includes('high')) return 'bad'
+  if (normalized.includes('medium')) return 'warn'
+  return 'good'
 }
 
 function Candidate({ candidate, rank }) {
